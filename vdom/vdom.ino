@@ -104,24 +104,50 @@ void diffChildren(Node* oldGroup, Node* newGroup) {
   }
 }
 
-void patchBuffer() {
+// implicitly uses `nodeNew` and will walk it back-to-front and draw nodes
+void drawTile(int tx, int ty) {
+  int x0 = tx * TILE_SIZE;
+  int y0 = ty * TILE_SIZE;
+  BoundingBox tileBbox = { x0, y0, TILE_SIZE, TILE_SIZE };
+
+  // Walk the new root and draw all nodes whose bbox intersects the tile
+  nodeWalkPreOrderDFS(rootNodeNew, [&](Node* node) -> bool {
+    if (!bboxIntersects(&node->bbox, &tileBbox))
+      return false; // Short-circuit if node not relevant to the tile
+
+    switch (node->type) {
+      case NODE_RECT: break; // TODO
+      case NODE_RECTFILL: {
+        // Only fill the part inside the tile
+        int rx0 = MAX(node->u.rect.x, x0);
+        int ry0 = MAX(node->u.rect.y, y0);
+        int rx1 = MIN(node->u.rect.x + node->u.rect.w, x0 + TILE_SIZE);
+        int ry1 = MIN(node->u.rect.y + node->u.rect.h, y0 + TILE_SIZE);
+        if (rx1 > rx0 && ry1 > ry0) 
+          video.fillRect(rx0, ry0, rx1 - rx0, ry1 - ry0, node->u.rect.color);
+        break;
+      }
+      case NODE_XLINE: break; // TODO
+      case NODE_YLINE: break; // TODO
+      case NODE_TEXT: break; // TODO
+      case NODE_GROUP: break; // Nothing to do
+      default: break;
+    }
+
+    return true;
+  });
+}
+
+void redrawDirtyTiles() {
   dirty_foreach([](int tx, int ty) {
     int x0 = tx * TILE_SIZE;
     int y0 = ty * TILE_SIZE;
-    int x1 = x0 + TILE_SIZE;
-    int y1 = y0 + TILE_SIZE;
 
-    // This only deals with the actually visible pixels (usable area on my CRT)
-    for (int y = MAX(y0, Y_MIN); y < y1 && y <= Y_MAX; ++y) {
-      for (int x = MAX(x0, X_MIN); x < x1 && x <= X_MAX; ++x) {
-        // TODO: This should write data for each node layer that relates to this
-        // tile; right now it only writes a gray color.
-        video.dotFast(x, y, COLOR_GRAY);
-      }
-    }
+    // Clear the tile
+    video.fillRect(x0, y0, TILE_SIZE, TILE_SIZE, COLOR_BLACK);
 
-    // TODO: instead:
-    // drawTile(tx, ty); // implicitly uses `nodeNew` and will walk it back-to-front and draw nodes
+    // Draw the scene inside this tile
+    drawTile(tx, ty);
   });
 }
 
@@ -165,8 +191,7 @@ void loop()
   dirty_clear();
   diffNode(rootNodeOld, rootNodeNew);
 
-  // Patch the buffer (redraw)
-  patchBuffer();
+  redrawDirtyTiles();
 
   // And finally render the esp32lib buffer
   // video.show(); // TODO: do we need to do this if we don't have double buffering?

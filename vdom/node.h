@@ -18,9 +18,11 @@ typedef enum {
   NODE_GROUP
 } NodeType;
 
+// needed for the self-reference below
 struct Node;
 typedef struct Node Node;
 
+// actual definition
 typedef struct Node {
   NodeType type;
   uint32_t key;
@@ -250,4 +252,19 @@ static inline Node nodeGroup(uint32_t key, Node** children, int child_count) {
   n.hash = h;
 
   return n;
+}
+
+// The callback can short-circuit the walk (eg. when drawing, if the node's bbox
+// doesn't intersect with the dirty tile).
+template<typename F>
+static inline void nodeWalkPreOrderDFS(Node* root, F&& callback) {
+  if (!root) return;
+
+  bool shouldContinue = callback(root);
+  if (!shouldContinue) return;
+
+  // Then recur on children if it's a group
+  if (root->type == NODE_GROUP)
+    for (int i = 0; i < root->u.group.child_count; i++)
+      nodeWalkPreOrderDFS(root->u.group.children[i], callback);
 }
