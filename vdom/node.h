@@ -1,0 +1,253 @@
+#pragma once
+
+#include <stddef.h>
+#include <stdint.h>
+
+#include "hash.h"
+#include "bbox.h"
+
+#define NODE_GROUP_MAX_CHILDREN 8
+
+typedef enum {
+  NODE_EMPTY,
+  NODE_RECT,
+  NODE_RECTFILL,
+  NODE_XLINE,
+  NODE_YLINE,
+  NODE_TEXT,
+  NODE_GROUP
+} NodeType;
+
+struct Node;
+typedef struct Node Node;
+
+typedef struct Node {
+  NodeType type;
+  uint32_t key;
+  BoundingBox bbox;
+  uint32_t hash;
+  union {
+    struct { int x, y, w, h; uint8_t color; } rect;
+    struct { int x, y, len; uint8_t color; } xline;
+    struct { int x, y, len; uint8_t color; } yline;
+    struct { int x, y; const char* text; uint8_t color; } text;
+    struct { Node** children; int child_count; } group;
+  } u;
+} Node;
+
+static const int TEXT_CHAR_W = 6;
+static const int TEXT_CHAR_H = 8;
+
+static inline int textWidth(const char* s) {
+  int n = 0;
+  while (s[n]) n++;
+  return n * TEXT_CHAR_W;
+}
+
+static inline Node nodeEmpty(uint32_t key) {
+  Node n = {};
+  n.type = NODE_EMPTY;
+  n.key = key;
+  n.bbox.x = n.bbox.y = n.bbox.w = n.bbox.h = 0;
+  n.hash = hash_init;
+  return n;
+}
+
+static inline Node nodeRect(uint32_t key, int x, int y, int w, int h, uint8_t color) {
+  Node n = {};
+  NodeType type = NODE_RECT;
+  n.type = type;
+  n.key = key;
+
+  // BBOX
+  n.bbox.x = x; 
+  n.bbox.y = y; 
+  n.bbox.w = w; 
+  n.bbox.h = h;
+
+  // CONTENT
+  n.u.rect.x = x; 
+  n.u.rect.y = y; 
+  n.u.rect.w = w; 
+  n.u.rect.h = h; 
+  n.u.rect.color = color;
+
+  // HASH
+  uint32_t hv = hash_init;
+  hv = hash_update_u8(hv, type);
+  hv = hash_update_u32(hv, (uint32_t)x);
+  hv = hash_update_u32(hv, (uint32_t)y);
+  hv = hash_update_u32(hv, (uint32_t)w);
+  hv = hash_update_u32(hv, (uint32_t)h);
+  hv = hash_update_u8(hv, color);
+  n.hash = hv;
+
+  return n;
+}
+
+static inline Node nodeRectFill(uint32_t key, int x, int y, int w, int h, uint8_t color) {
+  Node n = {};
+  NodeType type = NODE_RECTFILL;
+  n.type = type;
+  n.key = key;
+
+  // BBOX
+  n.bbox.x = x; 
+  n.bbox.y = y; 
+  n.bbox.w = w; 
+  n.bbox.h = h;
+
+  // CONTENT
+  n.u.rect.x = x; 
+  n.u.rect.y = y; 
+  n.u.rect.w = w; 
+  n.u.rect.h = h; 
+  n.u.rect.color = color;
+
+  // HASH
+  uint32_t hv = hash_init;
+  hv = hash_update_u8(hv, type);
+  hv = hash_update_u32(hv, (uint32_t)x);
+  hv = hash_update_u32(hv, (uint32_t)y);
+  hv = hash_update_u32(hv, (uint32_t)w);
+  hv = hash_update_u32(hv, (uint32_t)h);
+  hv = hash_update_u8(hv, color);
+  n.hash = hv;
+
+  return n;
+}
+
+static inline Node nodeXLine(uint32_t key, int x, int y, int len, uint8_t color) {
+  Node n = {};
+  NodeType type = NODE_XLINE;
+  n.type = type;
+  n.key = key;
+
+  // BBOX
+  n.bbox.x = x; 
+  n.bbox.y = y; 
+  n.bbox.w = len; 
+  n.bbox.h = 1;
+
+  // CONTENT
+  n.u.xline.x = x;
+  n.u.xline.y = y; 
+  n.u.xline.len = len; 
+  n.u.xline.color = color;
+
+  // HASH
+  uint32_t h = hash_init;
+  h = hash_update_u8(h, type);
+  h = hash_update_u32(h, (uint32_t)x);
+  h = hash_update_u32(h, (uint32_t)y);
+  h = hash_update_u32(h, (uint32_t)len);
+  h = hash_update_u8(h, color);
+  n.hash = h;
+
+  return n;
+}
+
+static inline Node nodeYLine(uint32_t key, int x, int y, int len, uint8_t color) {
+  Node n = {};
+  NodeType type = NODE_YLINE;
+  n.type = type;
+  n.key = key;
+
+  // BBOX
+  n.bbox.x = x;
+  n.bbox.y = y;
+  n.bbox.w = 1;
+  n.bbox.h = len;
+
+  // CONTENT
+  n.u.yline.x = x;
+  n.u.yline.y = y;
+  n.u.yline.len = len;
+  n.u.yline.color = color;
+
+  // HASH
+  uint32_t h = hash_init;
+  h = hash_update_u8(h, type);
+  h = hash_update_u32(h, (uint32_t)x);
+  h = hash_update_u32(h, (uint32_t)y);
+  h = hash_update_u32(h, (uint32_t)len);
+  h = hash_update_u8(h, color);
+  n.hash = h;
+
+  return n;
+}
+
+static inline Node nodeText(uint32_t key, int x, int y, const char* text, uint8_t color) {
+  Node n = {};
+  NodeType type = NODE_TEXT;
+  n.type = type;
+  n.key = key;
+
+  // BBOX
+  n.bbox.x = x;
+  n.bbox.y = y;
+  n.bbox.w = textWidth(text);
+  n.bbox.h = TEXT_CHAR_H;
+
+  // CONTENT
+  n.u.text.x = x;
+  n.u.text.y = y;
+  n.u.text.text = text;
+  n.u.text.color = color;
+
+  // HASH
+  uint32_t h = hash_init;
+  h = hash_update_u8(h, type);
+  h = hash_update_u32(h, (uint32_t)x);
+  h = hash_update_u32(h, (uint32_t)y);
+  h = hash_update_u8(h, color);
+  h = hash_update_cstr(h, text);
+  n.hash = h;
+
+  return n;
+}
+
+static inline Node nodeGroup(uint32_t key, Node** children, int child_count) {
+  Node n = {};
+  NodeType type = NODE_GROUP;
+  n.type = type;
+  n.key = key;
+
+  // CONTENT
+  n.u.group.children = children;
+  n.u.group.child_count = child_count;
+
+  // BBOX + HASH (looping over children)
+  if (child_count == 0) {
+    n.bbox.x = n.bbox.y = n.bbox.w = n.bbox.h = 0;
+    uint32_t h = hash_init;
+    h = hash_update_u8(h, type);
+    n.hash = h;
+    return n;
+  }
+
+  int x0 = children[0]->bbox.x;
+  int y0 = children[0]->bbox.y;
+  int x1 = children[0]->bbox.x + children[0]->bbox.w;
+  int y1 = children[0]->bbox.y + children[0]->bbox.h;
+
+  uint32_t h = hash_init;
+  h = hash_update_u8(h, type);
+
+  for (int i = 0; i < child_count; i++) {
+    Node* child = children[i];
+    if (child->bbox.x < x0) x0 = child->bbox.x;
+    if (child->bbox.y < y0) y0 = child->bbox.y;
+    if (child->bbox.x + child->bbox.w > x1) x1 = child->bbox.x + child->bbox.w;
+    if (child->bbox.y + child->bbox.h > y1) y1 = child->bbox.y + child->bbox.h;
+    h = hash_update_u32(h, child->hash);
+  }
+
+  n.bbox.x = x0; 
+  n.bbox.y = y0; 
+  n.bbox.w = x1 - x0; 
+  n.bbox.h = y1 - y0;
+  n.hash = h;
+
+  return n;
+}
