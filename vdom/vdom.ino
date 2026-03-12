@@ -184,7 +184,8 @@ void setup()
 
 void loop()
 {
-  // We want to get rid of this line with scene diffing and dirty bits and whatnot!
+  // Look ma, no clearing the whole buffer before drawing! (It flickered too
+  // much and we don't have enough memory for double buffering...)
   // video.clear(0);
 
   // Diff the old and new views (mark dirty tiles)
@@ -192,9 +193,6 @@ void loop()
   diffNode(rootNodeOld, rootNodeNew);
 
   redrawDirtyTiles();
-
-  // And finally render the esp32lib buffer
-  // video.show(); // TODO: do we need to do this if we don't have double buffering?
 
   // Now update any game logic
   updateBoxPosition();
