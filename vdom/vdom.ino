@@ -182,8 +182,22 @@ void setup()
   boxDY = 1;
 }
 
+void enforce_fps() {
+  static unsigned long lastFrameUs = 0;
+  unsigned long now = micros();
+  if (lastFrameUs != 0) {
+    unsigned long elapsed = now - lastFrameUs;
+    if (elapsed < LOOP_FRAME_US) {
+      delayMicroseconds(LOOP_FRAME_US - elapsed);
+    }
+  }
+  lastFrameUs = micros();
+}
+
 void loop()
 {
+  enforce_fps();
+
   // Look ma, no clearing the whole buffer before drawing! (It flickered too
   // much and we don't have enough memory for double buffering...)
   // video.clear(0);

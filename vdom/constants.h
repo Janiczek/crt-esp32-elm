@@ -22,3 +22,6 @@
 #define COLOR_BLACK 0
 #define COLOR_GRAY 127
 #define COLOR_WHITE 255
+
+#define LOOP_FPS 60
+#define LOOP_FRAME_US (1000000UL / LOOP_FPS)
