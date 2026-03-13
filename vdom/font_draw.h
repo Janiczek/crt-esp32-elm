@@ -9,14 +9,18 @@ static inline void drawChar(const FontMono1B *font, int x0, int y0, char c, uint
   if (!font_hasChar(font, c))
     return;
   int idx = (unsigned char)c - font->ascii_first;
-  const unsigned char *glyph = font->bits + (unsigned long)idx * font->stride * font->glyph_h;
+  const unsigned char *glyph = font->bits + (unsigned long)idx * font->glyph_h;
 
   for (int row = 0; row < font->glyph_h; row++) {
     for (int col = 0; col < font->glyph_w; col++) {
-      int byteIdx = row * font->stride + col / 8;
-      int bitIdx  = 7 - (col % 8);
-      if ((glyph[byteIdx] >> bitIdx) & 1)
-        video.dotFast(x0 + col, y0 + row, color);
+      int px = x0 + col;
+      int py = y0 + row;
+      if (px >= 0 && px < video.xres && py >= 0 && py < video.yres) {
+        int byteIdx = row;
+        int bitIdx  = 7 - (col % 8);
+        if ((glyph[byteIdx] >> bitIdx) & 1)
+          video.dotFast(px, py, color);
+      }
     }
   }
 }

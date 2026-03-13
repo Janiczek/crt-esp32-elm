@@ -7,9 +7,8 @@ typedef struct FontMono1B {
   unsigned char ascii_first;
   unsigned char ascii_last;
   int num_glyphs;
-  int glyph_w;
+  int glyph_w; // <= 8, so as to fit in a byte
   int glyph_h;
-  int stride;
   const unsigned char *bits;
 } FontMono1B;
 

@@ -1,10 +1,76 @@
+#include <Arduino.h>
+#include <string.h>
+
 #include "constants.h"
 #include "globals.h"
 #include "node.h"
 #include "node_draw.h"
 #include "dirty.h"
 #include "prelude.h"
+#include "font.h"
+#include "font/bitbuntu_11.h"
+#include "font/bitocra_11.h"
+#include "font/bitocra_7.h"
+#include "font/cherry_400_10.h"
+#include "font/cherry_700_10.h"
+#include "font/clr6x12_12.h"
+#include "font/creep_12.h"
+#include "font/dina_italic_400_10.h"
+#include "font/dina_italic_400_8.h"
+#include "font/dina_italic_400_9.h"
+#include "font/dina_italic_700_10.h"
+#include "font/dina_italic_700_8.h"
+#include "font/dina_italic_700_9.h"
+#include "font/dina_regular_400_10.h"
 #include "font/dina_regular_400_6.h"
+#include "font/dina_regular_400_8.h"
+#include "font/dina_regular_400_9.h"
+#include "font/dina_regular_700_10.h"
+#include "font/dina_regular_700_8.h"
+#include "font/dina_regular_700_9.h"
+#include "font/ecran_monochrome_7.h"
+#include "font/f4x6_6.h"
+#include "font/f5x7_7.h"
+#include "font/f5x8_8.h"
+#include "font/f6x10_10.h"
+#include "font/f6x12_12.h"
+#include "font/f6x13b_13.h"
+#include "font/f6x13o_13.h"
+#include "font/f6x13_13.h"
+#include "font/f6x9_9.h"
+#include "font/f7x13b_13.h"
+#include "font/f7x13o_13.h"
+#include "font/f7x13_13.h"
+#include "font/f7x14b_14.h"
+#include "font/f7x14_14.h"
+#include "font/f8x13b_13.h"
+#include "font/f8x13o_13.h"
+#include "font/f8x13_13.h"
+#include "font/f9x18b_18.h"
+#include "font/f9x18_18.h"
+#include "font/haxormedium_11.h"
+#include "font/haxormedium_13.h"
+#include "font/haxormedium_14.h"
+#include "font/haxornarrow_17.h"
+#include "font/haxornarrow_21.h"
+#include "font/lemon_12.h"
+#include "font/lemon_j_12.h"
+#include "font/monocle_fixed_12.h"
+#include "font/monogram_extended_9.h"
+#include "font/monospaced_serif_10.h"
+#include "font/phil_ui_tiny_8.h"
+#include "font/scientifica_italic_400_12.h"
+#include "font/scientifica_regular_400_12.h"
+#include "font/scientifica_regular_700_12.h"
+#include "font/semifraktur_monospace_10.h"
+#include "font/six_twelve_mono_10.h"
+#include "font/spleen_5x8_8.h"
+#include "font/spleen_8x16_16.h"
+#include "font/three_x_six_pixel_monospace_7.h"
+#include "font/tom_thumb_6.h"
+#include "font/unscii_8.h"
+#include "font/unscii_alt_8.h"
+#include "font/unscii_thin_8.h"
 
 //----------------------------------------------
 // VDOM-specific
@@ -21,6 +87,128 @@ struct ViewPool {
 static ViewPool viewPool[2];
 static int viewPoolIndex = 0;
 
+#define GPIO0_BTN        0
+#define FONT_LINE_WIDTH  60
+#define NUM_FONTS        63
+
+static const FontMono1B* const fonts[NUM_FONTS] = {
+  &font_bitbuntu_11,
+  &font_bitocra_11,
+  &font_bitocra_7,
+  &font_cherry_400_10,
+  &font_cherry_700_10,
+  &font_clr6x12_12,
+  &font_creep_12,
+  &font_dina_italic_400_10,
+  &font_dina_italic_400_8,
+  &font_dina_italic_400_9,
+  &font_dina_italic_700_10,
+  &font_dina_italic_700_8,
+  &font_dina_italic_700_9,
+  &font_dina_regular_400_10,
+  &font_dina_regular_400_6,
+  &font_dina_regular_400_8,
+  &font_dina_regular_400_9,
+  &font_dina_regular_700_10,
+  &font_dina_regular_700_8,
+  &font_dina_regular_700_9,
+  &font_ecran_monochrome_7,
+  &font_f4x6_6,
+  &font_f5x7_7,
+  &font_f5x8_8,
+  &font_f6x10_10,
+  &font_f6x12_12,
+  &font_f6x13b_13,
+  &font_f6x13o_13,
+  &font_f6x13_13,
+  &font_f6x9_9,
+  &font_f7x13b_13,
+  &font_f7x13o_13,
+  &font_f7x13_13,
+  &font_f7x14b_14,
+  &font_f7x14_14,
+  &font_f8x13b_13,
+  &font_f8x13o_13,
+  &font_f8x13_13,
+  &font_f9x18b_18,
+  &font_f9x18_18,
+  &font_haxormedium_11,
+  &font_haxormedium_13,
+  &font_haxormedium_14,
+  &font_haxornarrow_17,
+  &font_haxornarrow_21,
+  &font_lemon_12,
+  &font_lemon_j_12,
+  &font_monocle_fixed_12,
+  &font_monogram_extended_9,
+  &font_monospaced_serif_10,
+  &font_phil_ui_tiny_8,
+  &font_scientifica_italic_400_12,
+  &font_scientifica_regular_400_12,
+  &font_scientifica_regular_700_12,
+  &font_semifraktur_monospace_10,
+  &font_six_twelve_mono_10,
+  &font_spleen_5x8_8,
+  &font_spleen_8x16_16,
+  &font_three_x_six_pixel_monospace_7,
+  &font_tom_thumb_6,
+  &font_unscii_8,
+  &font_unscii_alt_8,
+  &font_unscii_thin_8,
+};
+
+static int fontIndex = 0;
+
+static const char TEXT_REST[] =
+  "\n"
+  "\n"
+  "!\"#$%&'()*+,-./0123456789:;<=>?@\n"
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`\n"
+  "abcdefghijklmnopqrstuvwxyz{|}~\n"
+  "\n"
+  "\n"
+  "def greet(name):\n"
+  "    print(f\"Hello, {name}!\")\n"
+  "\n"
+  "greet(\"world\")"
+  "\n"
+  "\n"
+  "int main() {\n"
+  "    cout << \"OHAI\" << endl;\n"
+  "    return 0;\n"
+  "}\n";
+
+static char firstLine[FONT_LINE_WIDTH + 3];
+static char textBuffer[sizeof(firstLine) + sizeof(TEXT_REST)];
+static const char* text = textBuffer;
+
+static void buildFirstLineAndText() {
+  int n = 0;
+  firstLine[n++] = 'F';
+  firstLine[n++] = 'O';
+  firstLine[n++] = 'N';
+  firstLine[n++] = 'T';
+  firstLine[n++] = ':';
+  firstLine[n++] = ' ';
+  const char* name = fonts[fontIndex]->name;
+  while (*name && n < FONT_LINE_WIDTH) firstLine[n++] = *name++;
+  while (n < FONT_LINE_WIDTH) firstLine[n++] = ' ';
+  firstLine[n++] = '\n';
+  firstLine[n] = '\0';
+  strcpy(textBuffer, firstLine);
+  strcat(textBuffer, TEXT_REST);
+}
+
+static void handleFontButton() {
+  static bool lastBtnHigh = true;
+  bool btnHigh = (digitalRead(GPIO0_BTN) == HIGH);
+  if (lastBtnHigh && !btnHigh) {
+    fontIndex = (fontIndex + 1) % NUM_FONTS;
+    buildFirstLineAndText();
+  }
+  lastBtnHigh = btnHigh;
+}
+
 //----------------------------------------------
 // Scene-specific
 const int boxW = 16;
@@ -28,25 +216,17 @@ const int boxH = 16;
 int boxX, boxY, boxDX, boxDY;
 int8_t boxColor; // intentionally -127..127 and overflowing
 
-const char* text =
-  "def greet(name):\n"
-  "    print(f\"Hello, {name}!\")\n"
-  "\n"
-  "greet(\"world\")";
-
-const FontMono1B *font = &font_dina_regular_400_6;
-
 
 Node* view() {
   ViewPool& pool = viewPool[viewPoolIndex];
   viewPoolIndex = 1 - viewPoolIndex;
 
   int nodeCount = 0;
-  pool.nodes[nodeCount++] = nodeRectFill(nodeCount, boxX,      boxY,      boxW, boxH,         abs(boxColor)); // bouncing box
-  pool.nodes[nodeCount++] = nodeText(    nodeCount, X_MIN + 2, Y_MIN + 2, text, font,         COLOR_WHITE);
-  pool.nodes[nodeCount++] = nodeXLine(   nodeCount, X_MIN,     Y_CENTER,  USABLE_W,           COLOR_GRAY);  // x-cross
-  pool.nodes[nodeCount++] = nodeYLine(   nodeCount, X_CENTER,  Y_MIN,     USABLE_H,           COLOR_GRAY);  // y-cross
-  pool.nodes[nodeCount++] = nodeRect(    nodeCount, X_MIN,     Y_MIN,     USABLE_W, USABLE_H, COLOR_WHITE); // border
+  //pool.nodes[nodeCount++] = nodeRectFill(nodeCount, boxX,      boxY,       boxW, boxH,         abs(boxColor)); // bouncing box
+  pool.nodes[nodeCount++] = nodeText(    nodeCount, X_MIN + 5, Y_MIN + 5,  text, fonts[fontIndex], COLOR_WHITE);   // text
+  //pool.nodes[nodeCount++] = nodeXLine(   nodeCount, X_MIN,     Y_CENTER,   USABLE_W,           COLOR_GRAY);    // x-cross
+  //pool.nodes[nodeCount++] = nodeYLine(   nodeCount, X_CENTER,  Y_MIN,      USABLE_H,           COLOR_GRAY);    // y-cross
+  //pool.nodes[nodeCount++] = nodeRect(    nodeCount, X_MIN,     Y_MIN,      USABLE_W, USABLE_H, COLOR_WHITE);   // border
 
   for (int i = 0; i < nodeCount; i++) {
     pool.ptrs[i] = &pool.nodes[i];
@@ -177,11 +357,15 @@ void setup()
   boxY = Y_CENTER - boxH/2;
   boxDX = 1;
   boxDY = 1;
+
+  pinMode(GPIO0_BTN, INPUT_PULLUP);
+  buildFirstLineAndText();
 }
 
 void loop()
 {
   enforce_fps();
+  handleFontButton();
 
   // Look ma, no clearing the whole buffer before drawing! (It flickered too
   // much and we don't have enough memory for double buffering...)
