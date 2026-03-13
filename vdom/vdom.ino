@@ -104,6 +104,15 @@ void diffChildren(Node* oldGroup, Node* newGroup) {
   }
 }
 
+void drawTileRectFill(Node* node, int x0, int y0) {
+  int rx0 = MAX(node->u.rect.x, x0);
+  int ry0 = MAX(node->u.rect.y, y0);
+  int rx1 = MIN(node->u.rect.x + node->u.rect.w, x0 + TILE_SIZE);
+  int ry1 = MIN(node->u.rect.y + node->u.rect.h, y0 + TILE_SIZE);
+  if (rx1 > rx0 && ry1 > ry0) 
+    video.fillRect(rx0, ry0, rx1 - rx0, ry1 - ry0, node->u.rect.color);
+}
+
 // implicitly uses `nodeNew` and will walk it back-to-front and draw nodes
 void drawTile(int tx, int ty) {
   int x0 = tx * TILE_SIZE;
@@ -117,16 +126,7 @@ void drawTile(int tx, int ty) {
 
     switch (node->type) {
       case NODE_RECT: break; // TODO
-      case NODE_RECTFILL: {
-        // Only fill the part inside the tile
-        int rx0 = MAX(node->u.rect.x, x0);
-        int ry0 = MAX(node->u.rect.y, y0);
-        int rx1 = MIN(node->u.rect.x + node->u.rect.w, x0 + TILE_SIZE);
-        int ry1 = MIN(node->u.rect.y + node->u.rect.h, y0 + TILE_SIZE);
-        if (rx1 > rx0 && ry1 > ry0) 
-          video.fillRect(rx0, ry0, rx1 - rx0, ry1 - ry0, node->u.rect.color);
-        break;
-      }
+      case NODE_RECTFILL: { drawTileRectFill(node,x0,y0); break; }
       case NODE_XLINE: break; // TODO
       case NODE_YLINE: break; // TODO
       case NODE_TEXT: break; // TODO
