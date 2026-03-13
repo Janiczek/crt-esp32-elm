@@ -1,11 +1,22 @@
-#include <ESP32Video.h>
-
 #include "constants.h"
 #include "globals.h"
 #include "node.h"
 #include "node_draw.h"
 #include "dirty.h"
 #include "prelude.h"
+#include "font/dina_regular_400_6.h"
+#include "font/dina_regular_400_8.h"
+#include "font/dina_regular_400_9.h"
+#include "font/dina_regular_400_10.h"
+#include "font/dina_regular_700_8.h"
+#include "font/dina_regular_700_9.h"
+#include "font/dina_regular_700_10.h"
+#include "font/dina_italic_400_8.h"
+#include "font/dina_italic_400_9.h"
+#include "font/dina_italic_400_10.h"
+#include "font/dina_italic_700_8.h"
+#include "font/dina_italic_700_9.h"
+#include "font/dina_italic_700_10.h"
 
 //----------------------------------------------
 // VDOM-specific
@@ -13,7 +24,7 @@ Node* rootNodeOld;
 Node* rootNodeNew;
 
 // Node pools. Roots live at ROOT_SLOT.
-#define NODE_POOL_SIZE 8
+#define NODE_POOL_SIZE 32
 #define ROOT_SLOT (NODE_POOL_SIZE - 1)
 struct ViewPool {
   Node nodes[NODE_POOL_SIZE];
@@ -35,11 +46,27 @@ Node* view() {
   viewPoolIndex = 1 - viewPoolIndex;
 
   int nodeCount = 0;
-  pool.nodes[nodeCount++] = nodeXLine(   nodeCount, X_MIN,      Y_CENTER,   USABLE_W,           COLOR_GRAY);    // x-cross
-  pool.nodes[nodeCount++] = nodeYLine(   nodeCount, X_CENTER,   Y_MIN,      USABLE_H,           COLOR_GRAY);    // y-cross
-  pool.nodes[nodeCount++] = nodeRectFill(nodeCount, boxX,       boxY,       boxW, boxH,         abs(boxColor)); // bouncing box
-  pool.nodes[nodeCount++] = nodeText(    nodeCount, X_MIN + 2,  Y_MIN + 2,  "VDOM",             COLOR_WHITE);   // text
-  pool.nodes[nodeCount++] = nodeRect(    nodeCount, X_MIN,      Y_MIN,      USABLE_W, USABLE_H, COLOR_WHITE);   // border
+  pool.nodes[nodeCount++] = nodeRectFill(nodeCount, boxX,      boxY,      boxW, boxH,         abs(boxColor)); // bouncing box
+  // TEXT START
+  int gap = 2;
+  int y = Y_MIN + gap;
+  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "r400_6  Hello world!", &font_dina_regular_400_6,  COLOR_WHITE); y += font_dina_regular_400_6.glyph_h + gap;
+  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "r400_8  Hello world!", &font_dina_regular_400_8,  COLOR_WHITE); y += font_dina_regular_400_8.glyph_h + gap;
+  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "r400_9  Hello world!", &font_dina_regular_400_9,  COLOR_WHITE); y += font_dina_regular_400_9.glyph_h + gap;
+  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "r400_10 Hello world!", &font_dina_regular_400_10, COLOR_WHITE); y += font_dina_regular_400_10.glyph_h + gap;
+  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "r700_8  Hello world!", &font_dina_regular_700_8,  COLOR_WHITE); y += font_dina_regular_700_8.glyph_h + gap;
+  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "r700_9  Hello world!", &font_dina_regular_700_9,  COLOR_WHITE); y += font_dina_regular_700_9.glyph_h + gap;
+  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "r700_10 Hello world!", &font_dina_regular_700_10, COLOR_WHITE); y += font_dina_regular_700_10.glyph_h + gap;
+  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "i400_8  Hello world!", &font_dina_italic_400_8,   COLOR_WHITE); y += font_dina_italic_400_8.glyph_h + gap;
+  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "i400_9  Hello world!", &font_dina_italic_400_9,   COLOR_WHITE); y += font_dina_italic_400_9.glyph_h + gap;
+  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "i400_10 Hello world!", &font_dina_italic_400_10,  COLOR_WHITE); y += font_dina_italic_400_10.glyph_h + gap;
+  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "i700_8  Hello world!", &font_dina_italic_700_8,   COLOR_WHITE); y += font_dina_italic_700_8.glyph_h + gap;
+  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "i700_9  Hello world!", &font_dina_italic_700_9,   COLOR_WHITE); y += font_dina_italic_700_9.glyph_h + gap;
+  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "i700_10 Hello world!", &font_dina_italic_700_10,  COLOR_WHITE);
+  // TEXT END
+  pool.nodes[nodeCount++] = nodeXLine(   nodeCount, X_MIN,     Y_CENTER,  USABLE_W,           COLOR_GRAY);    // x-cross
+  pool.nodes[nodeCount++] = nodeYLine(   nodeCount, X_CENTER,  Y_MIN,     USABLE_H,           COLOR_GRAY);    // y-cross
+  pool.nodes[nodeCount++] = nodeRect(    nodeCount, X_MIN,     Y_MIN,     USABLE_W, USABLE_H, COLOR_WHITE);   // border
 
   for (int i = 0; i < nodeCount; i++) {
     pool.ptrs[i] = &pool.nodes[i];
@@ -118,7 +145,7 @@ void drawTile(int tx, int ty) {
       case NODE_RECTFILL: node_draw_tileRectFill(node,tx0,ty0); break;
       case NODE_XLINE:    node_draw_tileXLine(node,tx0,ty0);    break;
       case NODE_YLINE:    node_draw_tileYLine(node,tx0,ty0);    break;
-      case NODE_TEXT:     break; // TODO
+      case NODE_TEXT:     node_draw_tileText(node,tx0,ty0);     break;
       case NODE_GROUP:    break; // Nothing to do
       default:            break;
     }
@@ -180,17 +207,17 @@ void loop()
   // much and we don't have enough memory for double buffering...)
   // video.clear(0);
 
-  // Diff the old and new views (mark dirty tiles)
+  // Diff VDOM trees and mark dirty tiles
   dirty_clear();
   diffNode(rootNodeOld, rootNodeNew);
 
   redrawDirtyTiles();
 
-  // Now update any game logic
+  // Update any game logic
   updateBoxOnTick();
   checkBoxBounce();
 
-  // Generate new VDOM
+  // Generate new VDOM trees
   rootNodeOld = rootNodeNew;
   rootNodeNew = view();
 }

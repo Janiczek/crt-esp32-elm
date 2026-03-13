@@ -5,8 +5,9 @@
 
 #include "hash.h"
 #include "bbox.h"
+#include "font.h"
 
-#define NODE_GROUP_MAX_CHILDREN 8
+#define NODE_GROUP_MAX_CHILDREN 32
 
 typedef enum {
   NODE_RECT,
@@ -31,18 +32,69 @@ typedef struct Node {
     struct { int x, y, w, h; uint8_t color; } rect;
     struct { int x, y, len; uint8_t color; } xline;
     struct { int x, y, len; uint8_t color; } yline;
-    struct { int x, y; const char* text; uint8_t color; } text;
+    struct { int x, y; const char* text; const struct FontMono1B* font; uint8_t color; } text;
     struct { Node** children; int child_count; } group;
   } u;
 } Node;
 
-static const int TEXT_CHAR_W = 6;
-static const int TEXT_CHAR_H = 8;
+static inline Node nodeGroup(uint32_t key, Node** children, int child_count) {
+  Node n = {};
+  n.type = NODE_GROUP;
+  n.key = key;
 
-static inline int textWidth(const char* s) {
-  int n = 0;
-  while (s[n]) n++;
-  return n * TEXT_CHAR_W;
+  // CONTENT
+  n.u.group.children = children;
+  n.u.group.child_count = child_count;
+
+  // BBOX + HASH (looping over children)
+  if (child_count == 0) {
+    // BBOX
+    n.bbox.x = 0;
+    n.bbox.y = 0;
+    n.bbox.w = 0;
+    n.bbox.h = 0;
+
+    // HASH
+    uint32_t h = hash_init;
+    h = hash_update_u8(h, n.type);
+    n.hash = h;
+
+    return n;
+  }
+
+  int x0 = children[0]->bbox.x;
+  int y0 = children[0]->bbox.y;
+  int x1 = children[0]->bbox.x + children[0]->bbox.w;
+  int y1 = children[0]->bbox.y + children[0]->bbox.h;
+
+  uint32_t h = hash_init;
+  h = hash_update_u8(h, n.type);
+
+  for (int i = 0; i < child_count; i++) {
+    Node* child = children[i];
+
+    // BBOX
+    if (child->bbox.x < x0) x0 = child->bbox.x;
+    if (child->bbox.y < y0) y0 = child->bbox.y;
+    if (child->bbox.x + child->bbox.w > x1) x1 = child->bbox.x + child->bbox.w;
+    if (child->bbox.y + child->bbox.h > y1) y1 = child->bbox.y + child->bbox.h;
+
+    // HASH
+    h = hash_update_u32(h, child->hash);
+  }
+
+  n.bbox.x = x0; 
+  n.bbox.y = y0; 
+  n.bbox.w = x1 - x0; 
+  n.bbox.h = y1 - y0;
+
+  n.hash = h;
+
+  return n;
+}
+
+static inline Node nodeEmpty(uint32_t key) {
+  return nodeGroup(key, nullptr, 0);
 }
 
 static inline Node nodeRect(uint32_t key, int x, int y, int w, int h, uint8_t color) {
@@ -165,7 +217,7 @@ static inline Node nodeYLine(uint32_t key, int x, int y, int len, uint8_t color)
   return n;
 }
 
-static inline Node nodeText(uint32_t key, int x, int y, const char* text, uint8_t color) {
+static inline Node nodeText(uint32_t key, int x, int y, const char* text, const FontMono1B* font, uint8_t color) {
   Node n = {};
   n.type = NODE_TEXT;
   n.key = key;
@@ -173,13 +225,14 @@ static inline Node nodeText(uint32_t key, int x, int y, const char* text, uint8_
   // BBOX
   n.bbox.x = x;
   n.bbox.y = y;
-  n.bbox.w = textWidth(text);
-  n.bbox.h = TEXT_CHAR_H;
+  n.bbox.w = font_textWidth(text, font);
+  n.bbox.h = font->glyph_h;
 
   // CONTENT
   n.u.text.x = x;
   n.u.text.y = y;
   n.u.text.text = text;
+  n.u.text.font = font;
   n.u.text.color = color;
 
   // HASH
@@ -189,69 +242,10 @@ static inline Node nodeText(uint32_t key, int x, int y, const char* text, uint8_
   h = hash_update_u32(h, (uint32_t)y);
   h = hash_update_u8(h, color);
   h = hash_update_cstr(h, text);
+  h = hash_update_cstr(h, font->name);
   n.hash = h;
 
   return n;
-}
-
-static inline Node nodeGroup(uint32_t key, Node** children, int child_count) {
-  Node n = {};
-  n.type = NODE_GROUP;
-  n.key = key;
-
-  // CONTENT
-  n.u.group.children = children;
-  n.u.group.child_count = child_count;
-
-  // BBOX + HASH (looping over children)
-  if (child_count == 0) {
-    // BBOX
-    n.bbox.x = 0;
-    n.bbox.y = 0;
-    n.bbox.w = 0;
-    n.bbox.h = 0;
-
-    // HASH
-    uint32_t h = hash_init;
-    h = hash_update_u8(h, n.type);
-    n.hash = h;
-
-    return n;
-  }
-
-  int x0 = children[0]->bbox.x;
-  int y0 = children[0]->bbox.y;
-  int x1 = children[0]->bbox.x + children[0]->bbox.w;
-  int y1 = children[0]->bbox.y + children[0]->bbox.h;
-
-  uint32_t h = hash_init;
-  h = hash_update_u8(h, n.type);
-
-  for (int i = 0; i < child_count; i++) {
-    Node* child = children[i];
-
-    // BBOX
-    if (child->bbox.x < x0) x0 = child->bbox.x;
-    if (child->bbox.y < y0) y0 = child->bbox.y;
-    if (child->bbox.x + child->bbox.w > x1) x1 = child->bbox.x + child->bbox.w;
-    if (child->bbox.y + child->bbox.h > y1) y1 = child->bbox.y + child->bbox.h;
-
-    // HASH
-    h = hash_update_u32(h, child->hash);
-  }
-
-  n.bbox.x = x0; 
-  n.bbox.y = y0; 
-  n.bbox.w = x1 - x0; 
-  n.bbox.h = y1 - y0;
-
-  n.hash = h;
-
-  return n;
-}
-
-static inline Node nodeEmpty(uint32_t key) {
-  return nodeGroup(key, nullptr, 0);
 }
 
 // The callback can short-circuit the walk (eg. when drawing, if the node's bbox
