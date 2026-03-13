@@ -5,18 +5,6 @@
 #include "dirty.h"
 #include "prelude.h"
 #include "font/dina_regular_400_6.h"
-#include "font/dina_regular_400_8.h"
-#include "font/dina_regular_400_9.h"
-#include "font/dina_regular_400_10.h"
-#include "font/dina_regular_700_8.h"
-#include "font/dina_regular_700_9.h"
-#include "font/dina_regular_700_10.h"
-#include "font/dina_italic_400_8.h"
-#include "font/dina_italic_400_9.h"
-#include "font/dina_italic_400_10.h"
-#include "font/dina_italic_700_8.h"
-#include "font/dina_italic_700_9.h"
-#include "font/dina_italic_700_10.h"
 
 //----------------------------------------------
 // VDOM-specific
@@ -40,33 +28,25 @@ const int boxH = 16;
 int boxX, boxY, boxDX, boxDY;
 int8_t boxColor; // intentionally -127..127 and overflowing
 
+const char* text =
+  "def greet(name):\n"
+  "    print(f\"Hello, {name}!\")\n"
+  "\n"
+  "greet(\"world\")";
+
+const FontMono1B *font = &font_dina_regular_400_6;
+
 
 Node* view() {
   ViewPool& pool = viewPool[viewPoolIndex];
   viewPoolIndex = 1 - viewPoolIndex;
 
   int nodeCount = 0;
-  pool.nodes[nodeCount++] = nodeRectFill(nodeCount, boxX, boxY, boxW, boxH, abs(boxColor)); // bouncing box
-  // TEXT START
-  int gap = 2;
-  int y = Y_MIN + gap;
-  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "r400_6  Hello world!", &font_dina_regular_400_6,  COLOR_WHITE); y += font_dina_regular_400_6.glyph_h + gap;
-  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "r400_8  Hello world!", &font_dina_regular_400_8,  COLOR_WHITE); y += font_dina_regular_400_8.glyph_h + gap;
-  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "r400_9  Hello world!", &font_dina_regular_400_9,  COLOR_WHITE); y += font_dina_regular_400_9.glyph_h + gap;
-  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "r400_10 Hello world!", &font_dina_regular_400_10, COLOR_WHITE); y += font_dina_regular_400_10.glyph_h + gap;
-  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "r700_8  Hello world!", &font_dina_regular_700_8,  COLOR_WHITE); y += font_dina_regular_700_8.glyph_h + gap;
-  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "r700_9  Hello world!", &font_dina_regular_700_9,  COLOR_WHITE); y += font_dina_regular_700_9.glyph_h + gap;
-  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "r700_10 Hello world!", &font_dina_regular_700_10, COLOR_WHITE); y += font_dina_regular_700_10.glyph_h + gap;
-  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "i400_8  Hello world!", &font_dina_italic_400_8,   COLOR_WHITE); y += font_dina_italic_400_8.glyph_h + gap;
-  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "i400_9  Hello world!", &font_dina_italic_400_9,   COLOR_WHITE); y += font_dina_italic_400_9.glyph_h + gap;
-  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "i400_10 Hello world!", &font_dina_italic_400_10,  COLOR_WHITE); y += font_dina_italic_400_10.glyph_h + gap;
-  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "i700_8  Hello world!", &font_dina_italic_700_8,   COLOR_WHITE); y += font_dina_italic_700_8.glyph_h + gap;
-  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "i700_9  Hello world!", &font_dina_italic_700_9,   COLOR_WHITE); y += font_dina_italic_700_9.glyph_h + gap;
-  pool.nodes[nodeCount++] = nodeText(nodeCount, y - Y_MIN + X_MIN, y, "i700_10 Hello world!", &font_dina_italic_700_10,  COLOR_WHITE);
-  // TEXT END
-  pool.nodes[nodeCount++] = nodeXLine(nodeCount, X_MIN,    Y_CENTER, USABLE_W,           COLOR_GRAY);  // x-cross
-  pool.nodes[nodeCount++] = nodeYLine(nodeCount, X_CENTER, Y_MIN,    USABLE_H,           COLOR_GRAY);  // y-cross
-  pool.nodes[nodeCount++] = nodeRect( nodeCount, X_MIN,    Y_MIN,    USABLE_W, USABLE_H, COLOR_WHITE); // border
+  pool.nodes[nodeCount++] = nodeRectFill(nodeCount, boxX,      boxY,      boxW, boxH,         abs(boxColor)); // bouncing box
+  pool.nodes[nodeCount++] = nodeText(    nodeCount, X_MIN + 2, Y_MIN + 2, text, font,         COLOR_WHITE);
+  pool.nodes[nodeCount++] = nodeXLine(   nodeCount, X_MIN,     Y_CENTER,  USABLE_W,           COLOR_GRAY);  // x-cross
+  pool.nodes[nodeCount++] = nodeYLine(   nodeCount, X_CENTER,  Y_MIN,     USABLE_H,           COLOR_GRAY);  // y-cross
+  pool.nodes[nodeCount++] = nodeRect(    nodeCount, X_MIN,     Y_MIN,     USABLE_W, USABLE_H, COLOR_WHITE); // border
 
   for (int i = 0; i < nodeCount; i++) {
     pool.ptrs[i] = &pool.nodes[i];

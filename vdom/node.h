@@ -225,8 +225,7 @@ static inline Node nodeText(uint32_t key, int x, int y, const char* text, const 
   // BBOX
   n.bbox.x = x;
   n.bbox.y = y;
-  n.bbox.w = font_textWidth(text, font);
-  n.bbox.h = font->glyph_h;
+  font_textMultilineSize(text, font, &n.bbox.w, &n.bbox.h);
 
   // CONTENT
   n.u.text.x = x;

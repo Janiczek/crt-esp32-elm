@@ -78,21 +78,27 @@ void node_draw_tileText(Node* node, int tx0, int ty0) {
   uint8_t color = node->u.text.color;
   int x = node->u.text.x;
   int y = node->u.text.y;
+  int w = node->bbox.w;
+  int h = node->bbox.h;
 
   int tx1 = tx0 + TILE_SIZE - 1;
   int ty1 = ty0 + TILE_SIZE - 1;
 
-  int total_w = font_textWidth(text, font);
-
-  // Fast reject: if the text doesn't intersect the tile at all, skip drawing
-  if (x + total_w < tx0 || x > tx1 || y + font->glyph_h < ty0 || y > ty1)
+  // Fast reject: if the text bbox doesn't intersect the tile at all, skip drawing
+  if (x + w < tx0 || x > tx1 || y + h < ty0 || y > ty1)
     return;
 
   int px = x;
+  int line_y = y;
   for (const char* p = text; *p; ++p) {
+    if (*p == '\n') {
+      line_y += font->glyph_h;
+      px = x;
+      continue;
+    }
     int adv = charAdvance(font, *p);
     int cx0 = px;
-    int cy0 = y;
+    int cy0 = line_y;
     int cx1 = cx0 + font->glyph_w - 1;
     int cy1 = cy0 + font->glyph_h - 1;
     if (!(cx1 < tx0 || cx0 > tx1 || cy1 < ty0 || cy0 > ty1)) {
