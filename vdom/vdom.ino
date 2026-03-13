@@ -3,9 +3,9 @@
 #include "constants.h"
 #include "globals.h"
 #include "node.h"
+#include "node_draw.h"
 #include "dirty.h"
 #include "prelude.h"
-#include "graphics_extra.h"
 
 //----------------------------------------------
 // VDOM-specific
@@ -33,13 +33,11 @@ Node* view() {
   viewPoolIndex = 1 - viewPoolIndex;
 
   int nodeCount = 0;
-  pool.nodes[nodeCount++] = nodeRect(    nodeCount, X_MIN,      Y_MIN,      USABLE_W, USABLE_H, COLOR_WHITE);
-  pool.nodes[nodeCount++] = nodeXLine(   nodeCount, X_MIN,      Y_CENTER,   USABLE_W,           COLOR_GRAY);
-  pool.nodes[nodeCount++] = nodeYLine(   nodeCount, X_CENTER,   Y_MIN,      USABLE_H,           COLOR_GRAY);
-  pool.nodes[nodeCount++] = nodeRectFill(nodeCount, boxX,       boxY,       boxW, boxH,         COLOR_WHITE);
-  pool.nodes[nodeCount++] = nodeText(    nodeCount, X_MIN + 2,  Y_MIN + 2,  "VDOM",             COLOR_WHITE);
-  pool.nodes[nodeCount++] = nodeXLine(   nodeCount, X_MIN,      Y_MIN + 10, 80,                 COLOR_GRAY);
-  pool.nodes[nodeCount++] = nodeYLine(   nodeCount, X_MAX - 20, Y_MIN,      50,                 COLOR_GRAY);
+  pool.nodes[nodeCount++] = nodeRect(    nodeCount, X_MIN,      Y_MIN,      USABLE_W, USABLE_H, COLOR_WHITE); // border
+  pool.nodes[nodeCount++] = nodeXLine(   nodeCount, X_MIN,      Y_CENTER,   USABLE_W,           COLOR_GRAY);  // x-cross
+  pool.nodes[nodeCount++] = nodeYLine(   nodeCount, X_CENTER,   Y_MIN,      USABLE_H,           COLOR_GRAY);  // y-cross
+  pool.nodes[nodeCount++] = nodeRectFill(nodeCount, boxX,       boxY,       boxW, boxH,         COLOR_WHITE); // bouncing box
+  pool.nodes[nodeCount++] = nodeText(    nodeCount, X_MIN + 2,  Y_MIN + 2,  "VDOM",             COLOR_WHITE); // text
 
   for (int i = 0; i < nodeCount; i++) {
     pool.ptrs[i] = &pool.nodes[i];
@@ -101,49 +99,6 @@ void diffChildren(Node* oldGroup, Node* newGroup) {
   }
 }
 
-void drawTileRectFill(Node* node, int tx0, int ty0) {
-  // TODO: is it possible there's an off-by-one (eg. x+w-1 instead of x+w)?
-  int tx1 = tx0 + TILE_SIZE;
-  int ty1 = ty0 + TILE_SIZE;
-  int rx0 = MAX(node->u.rect.x, tx0);
-  int ry0 = MAX(node->u.rect.y, ty0);
-  int rx1 = MIN(node->u.rect.x + node->u.rect.w, tx1);
-  int ry1 = MIN(node->u.rect.y + node->u.rect.h, ty1);
-  if (rx1 > rx0 && ry1 > ry0) 
-    video.fillRect(rx0, ry0, rx1 - rx0, ry1 - ry0, node->u.rect.color);
-}
-
-void drawTileXLine(Node* node, int tx0, int ty0) {
-  int tx1 = tx0 + TILE_SIZE;
-  int ty1 = ty0 + TILE_SIZE;
-  int y = node->u.xline.y;
-  int x0 = node->u.xline.x;
-  int x1 = x0 + node->u.xline.len - 1;
-  // only draw if tile is not to the...
-  if (tx1 >= x0 && tx0 <= x1 && ty1 >= y && ty0 <= y) {
-    // right        left         top         bottom
-    // of the line
-    int cx0 = MAX(x0, tx0); // clamped x0
-    int cx1 = MIN(x1, tx1); // clamped x1
-    video.xLine(cx0,cx1,y,node->u.xline.color);
-  }
-}
-
-void drawTileYLine(Node* node, int tx0, int ty0) {
-  int tx1 = tx0 + TILE_SIZE;
-  int ty1 = ty0 + TILE_SIZE;
-  int x = node->u.yline.x;
-  int y0 = node->u.yline.y;
-  int y1 = y0 + node->u.yline.len - 1;
-  // only draw if tile is not to the...
-  if (tx1 >= x && tx0 <= x && ty1 >= y0 && ty0 <= y1) {
-    // right       left        top          bottom
-    // of the line
-    int cy0 = MAX(y0, ty0); // clamped y0
-    int cy1 = MIN(y1, ty1); // clamped y1
-    yLine(cy0,cy1,x,node->u.yline.color);
-  }
-}
 
 // implicitly uses `nodeNew` and will walk it back-to-front and draw nodes
 void drawTile(int tx, int ty) {
@@ -158,9 +113,9 @@ void drawTile(int tx, int ty) {
 
     switch (node->type) {
       case NODE_RECT:     break; // TODO
-      case NODE_RECTFILL: drawTileRectFill(node,tx0,ty0); break;
-      case NODE_XLINE:    drawTileXLine(node,tx0,ty0);    break;
-      case NODE_YLINE:    drawTileYLine(node,tx0,ty0);    break;
+      case NODE_RECTFILL: node_draw_tileRectFill(node,tx0,ty0); break;
+      case NODE_XLINE:    node_draw_tileXLine(node,tx0,ty0);    break;
+      case NODE_YLINE:    node_draw_tileYLine(node,tx0,ty0);    break;
       case NODE_TEXT:     break; // TODO
       case NODE_GROUP:    break; // Nothing to do
       default:            break;
@@ -212,18 +167,6 @@ void setup()
   boxY = Y_CENTER - boxH/2;
   boxDX = 1;
   boxDY = 1;
-}
-
-void enforce_fps() {
-  static unsigned long lastFrameUs = 0;
-  unsigned long now = micros();
-  if (lastFrameUs != 0) {
-    unsigned long elapsed = now - lastFrameUs;
-    if (elapsed < LOOP_FRAME_US) {
-      delayMicroseconds(LOOP_FRAME_US - elapsed);
-    }
-  }
-  lastFrameUs = micros();
 }
 
 void loop()

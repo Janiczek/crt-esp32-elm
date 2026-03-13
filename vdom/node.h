@@ -50,15 +50,24 @@ static inline Node nodeEmpty(uint32_t key) {
   Node n = {};
   n.type = NODE_EMPTY;
   n.key = key;
-  n.bbox.x = n.bbox.y = n.bbox.w = n.bbox.h = 0;
-  n.hash = hash_init;
+
+  // BBOX
+  n.bbox.x = 0;
+  n.bbox.y = 0;
+  n.bbox.w = 0;
+  n.bbox.h = 0;
+
+  // HASH
+  uint32_t h = hash_init;
+  h = hash_update_u8(h, n.type);
+  n.hash = h;
+
   return n;
 }
 
 static inline Node nodeRect(uint32_t key, int x, int y, int w, int h, uint8_t color) {
   Node n = {};
-  NodeType type = NODE_RECT;
-  n.type = type;
+  n.type = NODE_RECT;
   n.key = key;
 
   // BBOX
@@ -76,7 +85,7 @@ static inline Node nodeRect(uint32_t key, int x, int y, int w, int h, uint8_t co
 
   // HASH
   uint32_t hv = hash_init;
-  hv = hash_update_u8(hv, type);
+  hv = hash_update_u8(hv, n.type);
   hv = hash_update_u32(hv, (uint32_t)x);
   hv = hash_update_u32(hv, (uint32_t)y);
   hv = hash_update_u32(hv, (uint32_t)w);
@@ -89,8 +98,7 @@ static inline Node nodeRect(uint32_t key, int x, int y, int w, int h, uint8_t co
 
 static inline Node nodeRectFill(uint32_t key, int x, int y, int w, int h, uint8_t color) {
   Node n = {};
-  NodeType type = NODE_RECTFILL;
-  n.type = type;
+  n.type = NODE_RECTFILL;
   n.key = key;
 
   // BBOX
@@ -108,7 +116,7 @@ static inline Node nodeRectFill(uint32_t key, int x, int y, int w, int h, uint8_
 
   // HASH
   uint32_t hv = hash_init;
-  hv = hash_update_u8(hv, type);
+  hv = hash_update_u8(hv, n.type);
   hv = hash_update_u32(hv, (uint32_t)x);
   hv = hash_update_u32(hv, (uint32_t)y);
   hv = hash_update_u32(hv, (uint32_t)w);
@@ -121,8 +129,7 @@ static inline Node nodeRectFill(uint32_t key, int x, int y, int w, int h, uint8_
 
 static inline Node nodeXLine(uint32_t key, int x, int y, int len, uint8_t color) {
   Node n = {};
-  NodeType type = NODE_XLINE;
-  n.type = type;
+  n.type = NODE_XLINE;
   n.key = key;
 
   // BBOX
@@ -139,7 +146,7 @@ static inline Node nodeXLine(uint32_t key, int x, int y, int len, uint8_t color)
 
   // HASH
   uint32_t h = hash_init;
-  h = hash_update_u8(h, type);
+  h = hash_update_u8(h, n.type);
   h = hash_update_u32(h, (uint32_t)x);
   h = hash_update_u32(h, (uint32_t)y);
   h = hash_update_u32(h, (uint32_t)len);
@@ -151,8 +158,7 @@ static inline Node nodeXLine(uint32_t key, int x, int y, int len, uint8_t color)
 
 static inline Node nodeYLine(uint32_t key, int x, int y, int len, uint8_t color) {
   Node n = {};
-  NodeType type = NODE_YLINE;
-  n.type = type;
+  n.type = NODE_YLINE;
   n.key = key;
 
   // BBOX
@@ -169,7 +175,7 @@ static inline Node nodeYLine(uint32_t key, int x, int y, int len, uint8_t color)
 
   // HASH
   uint32_t h = hash_init;
-  h = hash_update_u8(h, type);
+  h = hash_update_u8(h, n.type);
   h = hash_update_u32(h, (uint32_t)x);
   h = hash_update_u32(h, (uint32_t)y);
   h = hash_update_u32(h, (uint32_t)len);
@@ -181,8 +187,7 @@ static inline Node nodeYLine(uint32_t key, int x, int y, int len, uint8_t color)
 
 static inline Node nodeText(uint32_t key, int x, int y, const char* text, uint8_t color) {
   Node n = {};
-  NodeType type = NODE_TEXT;
-  n.type = type;
+  n.type = NODE_TEXT;
   n.key = key;
 
   // BBOX
@@ -199,7 +204,7 @@ static inline Node nodeText(uint32_t key, int x, int y, const char* text, uint8_
 
   // HASH
   uint32_t h = hash_init;
-  h = hash_update_u8(h, type);
+  h = hash_update_u8(h, n.type);
   h = hash_update_u32(h, (uint32_t)x);
   h = hash_update_u32(h, (uint32_t)y);
   h = hash_update_u8(h, color);
@@ -211,8 +216,7 @@ static inline Node nodeText(uint32_t key, int x, int y, const char* text, uint8_
 
 static inline Node nodeGroup(uint32_t key, Node** children, int child_count) {
   Node n = {};
-  NodeType type = NODE_GROUP;
-  n.type = type;
+  n.type = NODE_GROUP;
   n.key = key;
 
   // CONTENT
@@ -221,10 +225,17 @@ static inline Node nodeGroup(uint32_t key, Node** children, int child_count) {
 
   // BBOX + HASH (looping over children)
   if (child_count == 0) {
-    n.bbox.x = n.bbox.y = n.bbox.w = n.bbox.h = 0;
+    // BBOX
+    n.bbox.x = 0;
+    n.bbox.y = 0;
+    n.bbox.w = 0;
+    n.bbox.h = 0;
+
+    // HASH
     uint32_t h = hash_init;
-    h = hash_update_u8(h, type);
+    h = hash_update_u8(h, n.type);
     n.hash = h;
+
     return n;
   }
 
@@ -234,14 +245,18 @@ static inline Node nodeGroup(uint32_t key, Node** children, int child_count) {
   int y1 = children[0]->bbox.y + children[0]->bbox.h;
 
   uint32_t h = hash_init;
-  h = hash_update_u8(h, type);
+  h = hash_update_u8(h, n.type);
 
   for (int i = 0; i < child_count; i++) {
     Node* child = children[i];
+
+    // BBOX
     if (child->bbox.x < x0) x0 = child->bbox.x;
     if (child->bbox.y < y0) y0 = child->bbox.y;
     if (child->bbox.x + child->bbox.w > x1) x1 = child->bbox.x + child->bbox.w;
     if (child->bbox.y + child->bbox.h > y1) y1 = child->bbox.y + child->bbox.h;
+
+    // HASH
     h = hash_update_u32(h, child->hash);
   }
 
@@ -249,6 +264,7 @@ static inline Node nodeGroup(uint32_t key, Node** children, int child_count) {
   n.bbox.y = y0; 
   n.bbox.w = x1 - x0; 
   n.bbox.h = y1 - y0;
+
   n.hash = h;
 
   return n;
