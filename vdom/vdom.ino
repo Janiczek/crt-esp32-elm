@@ -33,11 +33,11 @@ Node* view() {
   viewPoolIndex = 1 - viewPoolIndex;
 
   int nodeCount = 0;
-  pool.nodes[nodeCount++] = nodeRect(    nodeCount, X_MIN,      Y_MIN,      USABLE_W, USABLE_H, COLOR_WHITE); // border
   pool.nodes[nodeCount++] = nodeXLine(   nodeCount, X_MIN,      Y_CENTER,   USABLE_W,           COLOR_GRAY);  // x-cross
   pool.nodes[nodeCount++] = nodeYLine(   nodeCount, X_CENTER,   Y_MIN,      USABLE_H,           COLOR_GRAY);  // y-cross
   pool.nodes[nodeCount++] = nodeRectFill(nodeCount, boxX,       boxY,       boxW, boxH,         COLOR_WHITE); // bouncing box
   pool.nodes[nodeCount++] = nodeText(    nodeCount, X_MIN + 2,  Y_MIN + 2,  "VDOM",             COLOR_WHITE); // text
+  pool.nodes[nodeCount++] = nodeRect(    nodeCount, X_MIN,      Y_MIN,      USABLE_W, USABLE_H, COLOR_WHITE); // border
 
   for (int i = 0; i < nodeCount; i++) {
     pool.ptrs[i] = &pool.nodes[i];
@@ -112,7 +112,7 @@ void drawTile(int tx, int ty) {
       return false; // Short-circuit if node not relevant to the tile
 
     switch (node->type) {
-      case NODE_RECT:     break; // TODO
+      case NODE_RECT:     node_draw_tileRect(node,tx0,ty0);     break;
       case NODE_RECTFILL: node_draw_tileRectFill(node,tx0,ty0); break;
       case NODE_XLINE:    node_draw_tileXLine(node,tx0,ty0);    break;
       case NODE_YLINE:    node_draw_tileYLine(node,tx0,ty0);    break;
