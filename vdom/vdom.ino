@@ -27,17 +27,19 @@ static int viewPoolIndex = 0;
 const int boxW = 16;
 const int boxH = 16;
 int boxX, boxY, boxDX, boxDY;
+int8_t boxColor; // intentionally -127..127 and overflowing
+
 
 Node* view() {
   ViewPool& pool = viewPool[viewPoolIndex];
   viewPoolIndex = 1 - viewPoolIndex;
 
   int nodeCount = 0;
-  pool.nodes[nodeCount++] = nodeXLine(   nodeCount, X_MIN,      Y_CENTER,   USABLE_W,           COLOR_GRAY);  // x-cross
-  pool.nodes[nodeCount++] = nodeYLine(   nodeCount, X_CENTER,   Y_MIN,      USABLE_H,           COLOR_GRAY);  // y-cross
-  pool.nodes[nodeCount++] = nodeRectFill(nodeCount, boxX,       boxY,       boxW, boxH,         COLOR_WHITE); // bouncing box
-  pool.nodes[nodeCount++] = nodeText(    nodeCount, X_MIN + 2,  Y_MIN + 2,  "VDOM",             COLOR_WHITE); // text
-  pool.nodes[nodeCount++] = nodeRect(    nodeCount, X_MIN,      Y_MIN,      USABLE_W, USABLE_H, COLOR_WHITE); // border
+  pool.nodes[nodeCount++] = nodeXLine(   nodeCount, X_MIN,      Y_CENTER,   USABLE_W,           COLOR_GRAY);    // x-cross
+  pool.nodes[nodeCount++] = nodeYLine(   nodeCount, X_CENTER,   Y_MIN,      USABLE_H,           COLOR_GRAY);    // y-cross
+  pool.nodes[nodeCount++] = nodeRectFill(nodeCount, boxX,       boxY,       boxW, boxH,         abs(boxColor)); // bouncing box
+  pool.nodes[nodeCount++] = nodeText(    nodeCount, X_MIN + 2,  Y_MIN + 2,  "VDOM",             COLOR_WHITE);   // text
+  pool.nodes[nodeCount++] = nodeRect(    nodeCount, X_MIN,      Y_MIN,      USABLE_W, USABLE_H, COLOR_WHITE);   // border
 
   for (int i = 0; i < nodeCount; i++) {
     pool.ptrs[i] = &pool.nodes[i];
@@ -138,9 +140,10 @@ void redrawDirtyTiles() {
   });
 }
 
-void updateBoxPosition() {
+void updateBoxOnTick() {
   boxX += boxDX;
   boxY += boxDY;
+  boxColor += 4; // overflow will handle the rest
 }
 
 void checkBoxBounce() {
@@ -184,7 +187,7 @@ void loop()
   redrawDirtyTiles();
 
   // Now update any game logic
-  updateBoxPosition();
+  updateBoxOnTick();
   checkBoxBounce();
 
   // Generate new VDOM

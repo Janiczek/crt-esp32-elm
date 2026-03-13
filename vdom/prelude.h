@@ -2,8 +2,9 @@
 
 #include <stdint.h>
 
-inline int MIN(int a, int b) { return((a) < (b) ? a : b); }
-inline int MAX(int a, int b) { return((a) > (b) ? a : b); }
+inline uint8_t abs(int8_t a)     { return(a < 0 ? -a : a); }
+inline int     MIN(int a, int b) { return(a < b ? a : b); }
+inline int     MAX(int a, int b) { return(a > b ? a : b); }
 
 // Ran at every frame. Tries to let other tasks run while it waits.
 void enforce_fps() {
