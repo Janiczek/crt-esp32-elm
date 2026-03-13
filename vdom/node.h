@@ -9,7 +9,6 @@
 #define NODE_GROUP_MAX_CHILDREN 8
 
 typedef enum {
-  NODE_EMPTY,
   NODE_RECT,
   NODE_RECTFILL,
   NODE_XLINE,
@@ -44,25 +43,6 @@ static inline int textWidth(const char* s) {
   int n = 0;
   while (s[n]) n++;
   return n * TEXT_CHAR_W;
-}
-
-static inline Node nodeEmpty(uint32_t key) {
-  Node n = {};
-  n.type = NODE_EMPTY;
-  n.key = key;
-
-  // BBOX
-  n.bbox.x = 0;
-  n.bbox.y = 0;
-  n.bbox.w = 0;
-  n.bbox.h = 0;
-
-  // HASH
-  uint32_t h = hash_init;
-  h = hash_update_u8(h, n.type);
-  n.hash = h;
-
-  return n;
 }
 
 static inline Node nodeRect(uint32_t key, int x, int y, int w, int h, uint8_t color) {
@@ -268,6 +248,10 @@ static inline Node nodeGroup(uint32_t key, Node** children, int child_count) {
   n.hash = h;
 
   return n;
+}
+
+static inline Node nodeEmpty(uint32_t key) {
+  return nodeGroup(key, nullptr, 0);
 }
 
 // The callback can short-circuit the walk (eg. when drawing, if the node's bbox
