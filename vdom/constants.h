@@ -1,5 +1,6 @@
 #pragma once
 
+#define BTN_PIN 0
 #define DAC_PIN 25
 #define HAVE_VOLTAGE_DIVIDER false
 
