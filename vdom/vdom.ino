@@ -8,9 +8,13 @@
 #include "dirty.h"
 #include "prelude.h"
 #include "font.h"
+#include "font/berry_400_11.h"
+#include "font/berry_700_11.h"
 #include "font/bitbuntu_11.h"
 #include "font/bitocra_11.h"
 #include "font/bitocra_7.h"
+#include "font/cg_pixel_3x5_mono_5.h"
+#include "font/cg_pixel_4x5_mono_5.h"
 #include "font/cherry_400_10.h"
 #include "font/cherry_700_10.h"
 #include "font/clr6x12_12.h"
@@ -34,27 +38,29 @@
 #include "font/f5x8_8.h"
 #include "font/f6x10_10.h"
 #include "font/f6x12_12.h"
+#include "font/f6x13_13.h"
 #include "font/f6x13b_13.h"
 #include "font/f6x13o_13.h"
-#include "font/f6x13_13.h"
 #include "font/f6x9_9.h"
+#include "font/f7x13_13.h"
 #include "font/f7x13b_13.h"
 #include "font/f7x13o_13.h"
-#include "font/f7x13_13.h"
-#include "font/f7x14b_14.h"
 #include "font/f7x14_14.h"
+#include "font/f7x14b_14.h"
+#include "font/f8x13_13.h"
 #include "font/f8x13b_13.h"
 #include "font/f8x13o_13.h"
-#include "font/f8x13_13.h"
-#include "font/f9x18b_18.h"
 #include "font/f9x18_18.h"
+#include "font/f9x18b_18.h"
 #include "font/haxormedium_11.h"
 #include "font/haxormedium_13.h"
 #include "font/haxormedium_14.h"
 #include "font/haxornarrow_17.h"
 #include "font/haxornarrow_21.h"
+#include "font/lemon2_12.h"
 #include "font/lemon_12.h"
 #include "font/lemon_j_12.h"
+#include "font/limey_10.h"
 #include "font/monocle_fixed_12.h"
 #include "font/monogram_extended_9.h"
 #include "font/monospaced_serif_10.h"
@@ -66,7 +72,11 @@
 #include "font/six_twelve_mono_10.h"
 #include "font/spleen_5x8_8.h"
 #include "font/spleen_8x16_16.h"
-#include "font/three_x_six_pixel_monospace_7.h"
+#include "font/terminus_400_12.h"
+#include "font/terminus_400_14.h"
+#include "font/terminus_700_12.h"
+#include "font/terminus_700_14.h"
+#include "font/terminus_v_14.h"
 #include "font/tom_thumb_6.h"
 #include "font/unscii_8.h"
 #include "font/unscii_alt_8.h"
@@ -89,12 +99,16 @@ static int viewPoolIndex = 0;
 
 #define GPIO0_BTN        0
 #define FONT_LINE_WIDTH  60
-#define NUM_FONTS        63
+#define NUM_FONTS        73
 
 static const FontMono1B* const fonts[NUM_FONTS] = {
+  &font_berry_400_11,
+  &font_berry_700_11,
   &font_bitbuntu_11,
   &font_bitocra_11,
   &font_bitocra_7,
+  &font_cg_pixel_3x5_mono_5,
+  &font_cg_pixel_4x5_mono_5,
   &font_cherry_400_10,
   &font_cherry_700_10,
   &font_clr6x12_12,
@@ -118,27 +132,29 @@ static const FontMono1B* const fonts[NUM_FONTS] = {
   &font_f5x8_8,
   &font_f6x10_10,
   &font_f6x12_12,
+  &font_f6x13_13,
   &font_f6x13b_13,
   &font_f6x13o_13,
-  &font_f6x13_13,
   &font_f6x9_9,
+  &font_f7x13_13,
   &font_f7x13b_13,
   &font_f7x13o_13,
-  &font_f7x13_13,
-  &font_f7x14b_14,
   &font_f7x14_14,
+  &font_f7x14b_14,
+  &font_f8x13_13,
   &font_f8x13b_13,
   &font_f8x13o_13,
-  &font_f8x13_13,
-  &font_f9x18b_18,
   &font_f9x18_18,
+  &font_f9x18b_18,
   &font_haxormedium_11,
   &font_haxormedium_13,
   &font_haxormedium_14,
   &font_haxornarrow_17,
   &font_haxornarrow_21,
+  &font_lemon2_12,
   &font_lemon_12,
   &font_lemon_j_12,
+  &font_limey_10,
   &font_monocle_fixed_12,
   &font_monogram_extended_9,
   &font_monospaced_serif_10,
@@ -150,7 +166,11 @@ static const FontMono1B* const fonts[NUM_FONTS] = {
   &font_six_twelve_mono_10,
   &font_spleen_5x8_8,
   &font_spleen_8x16_16,
-  &font_three_x_six_pixel_monospace_7,
+  &font_terminus_400_12,
+  &font_terminus_400_14,
+  &font_terminus_700_12,
+  &font_terminus_700_14,
+  &font_terminus_v_14,
   &font_tom_thumb_6,
   &font_unscii_8,
   &font_unscii_alt_8,

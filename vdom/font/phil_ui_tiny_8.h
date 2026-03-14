@@ -108,6 +108,7 @@ static const FontMono1B font_phil_ui_tiny_8 = {
   .ascii_last  = 126,
   .num_glyphs  = 95,
   .glyph_w     = 7,
-  .glyph_h     = 8,
-  .bits        = font_phil_ui_tiny_8_bits,
+  .glyph_h           = 8,
+  .extra_line_height = 1,
+  .bits              = font_phil_ui_tiny_8_bits,
 };

@@ -108,6 +108,7 @@ static const FontMono1B font_f9x18b_18 = {
   .ascii_last  = 126,
   .num_glyphs  = 95,
   .glyph_w     = 8,
-  .glyph_h     = 18,
-  .bits        = font_f9x18b_18_bits,
+  .glyph_h           = 18,
+  .extra_line_height = 0,
+  .bits              = font_f9x18b_18_bits,
 };

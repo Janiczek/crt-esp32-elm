@@ -108,6 +108,7 @@ static const FontMono1B font_bitocra_7 = {
   .ascii_last  = 126,
   .num_glyphs  = 95,
   .glyph_w     = 4,
-  .glyph_h     = 7,
-  .bits        = font_bitocra_7_bits,
+  .glyph_h           = 7,
+  .extra_line_height = 0,
+  .bits              = font_bitocra_7_bits,
 };

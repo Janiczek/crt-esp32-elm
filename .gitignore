@@ -1,1 +1,9 @@
 .DS_Store
+tools/bdf2carray
+tools/bfm2carray
+tools/glyphs2carray
+tools/pcf2carray
+vdom/font/bdf/
+vdom/font/bfm/
+vdom/font/glyphs/
+vdom/font/pcf/

@@ -108,6 +108,7 @@ static const FontMono1B font_f4x6_6 = {
   .ascii_last  = 126,
   .num_glyphs  = 95,
   .glyph_w     = 4,
-  .glyph_h     = 6,
-  .bits        = font_f4x6_6_bits,
+  .glyph_h           = 6,
+  .extra_line_height = 1,
+  .bits              = font_f4x6_6_bits,
 };

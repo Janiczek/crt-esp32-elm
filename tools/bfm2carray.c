@@ -289,9 +289,10 @@ static int process_bfm(const char *input_path, const char *output_path) {
   fprintf(out, "  .ascii_first = %d,\n", ASCII_FIRST);
   fprintf(out, "  .ascii_last  = %d,\n", ASCII_LAST);
   fprintf(out, "  .num_glyphs  = %d,\n", NUM_GLYPHS);
-  fprintf(out, "  .glyph_w     = %d,\n", glyph_w);
-  fprintf(out, "  .glyph_h     = %d,\n", glyph_h);
-  fprintf(out, "  .bits        = font_%s_bits,\n", font_id);
+  fprintf(out, "  .glyph_w           = %d,\n", glyph_w);
+  fprintf(out, "  .glyph_h           = %d,\n", glyph_h);
+  fprintf(out, "  .extra_line_height = 0,\n");
+  fprintf(out, "  .bits              = font_%s_bits,\n", font_id);
   fprintf(out, "};\n");
 
   fclose(out);

@@ -9,6 +9,7 @@ typedef struct FontMono1B {
   int num_glyphs;
   int glyph_w; // <= 8, so as to fit in a byte
   int glyph_h;
+  int extra_line_height; // extra rows at top of each line when drawing (0 or 1)
   const unsigned char *bits;
 } FontMono1B;
 
@@ -39,5 +40,5 @@ static inline void font_textMultilineSize(const char* s, const FontMono1B* font,
   }
   if (line_w > max_w) max_w = line_w;
   *out_w = max_w;
-  *out_h = line_count * font->glyph_h;
+  *out_h = line_count * (font->glyph_h + font->extra_line_height);
 }

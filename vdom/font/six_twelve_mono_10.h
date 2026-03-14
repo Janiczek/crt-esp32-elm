@@ -108,6 +108,7 @@ static const FontMono1B font_six_twelve_mono_10 = {
   .ascii_last  = 126,
   .num_glyphs  = 95,
   .glyph_w     = 8,
-  .glyph_h     = 10,
-  .bits        = font_six_twelve_mono_10_bits,
+  .glyph_h           = 10,
+  .extra_line_height = 0,
+  .bits              = font_six_twelve_mono_10_bits,
 };

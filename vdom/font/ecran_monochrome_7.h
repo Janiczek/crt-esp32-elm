@@ -108,6 +108,7 @@ static const FontMono1B font_ecran_monochrome_7 = {
   .ascii_last  = 126,
   .num_glyphs  = 95,
   .glyph_w     = 7,
-  .glyph_h     = 7,
-  .bits        = font_ecran_monochrome_7_bits,
+  .glyph_h           = 7,
+  .extra_line_height = 1,
+  .bits              = font_ecran_monochrome_7_bits,
 };

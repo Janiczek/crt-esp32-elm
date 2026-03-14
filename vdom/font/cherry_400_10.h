@@ -108,6 +108,7 @@ static const FontMono1B font_cherry_400_10 = {
   .ascii_last  = 126,
   .num_glyphs  = 95,
   .glyph_w     = 6,
-  .glyph_h     = 10,
-  .bits        = font_cherry_400_10_bits,
+  .glyph_h           = 10,
+  .extra_line_height = 0,
+  .bits              = font_cherry_400_10_bits,
 };

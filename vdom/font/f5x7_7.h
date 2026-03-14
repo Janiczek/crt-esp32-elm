@@ -108,6 +108,7 @@ static const FontMono1B font_f5x7_7 = {
   .ascii_last  = 126,
   .num_glyphs  = 95,
   .glyph_w     = 5,
-  .glyph_h     = 7,
-  .bits        = font_f5x7_7_bits,
+  .glyph_h           = 7,
+  .extra_line_height = 1,
+  .bits              = font_f5x7_7_bits,
 };

@@ -92,16 +92,17 @@ void node_draw_tileText(Node* node, int tx0, int ty0) {
   int line_y = y;
   for (const char* p = text; *p; ++p) {
     if (*p == '\n') {
-      line_y += font->glyph_h;
+      line_y += font->glyph_h + font->extra_line_height;
       px = x;
       continue;
     }
     int adv = charAdvance(font, *p);
     int cx0 = px;
     int cy0 = line_y;
+    int draw_y0 = cy0 + font->extra_line_height;
     int cx1 = cx0 + font->glyph_w - 1;
-    int cy1 = cy0 + font->glyph_h - 1;
-    if (!(cx1 < tx0 || cx0 > tx1 || cy1 < ty0 || cy0 > ty1)) {
+    int cy1 = draw_y0 + font->glyph_h - 1;
+    if (!(cx1 < tx0 || cx0 > tx1 || cy1 < ty0 || draw_y0 > ty1)) {
       drawChar(font, cx0, cy0, *p, color);
     }
     px += adv;

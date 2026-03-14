@@ -108,6 +108,7 @@ static const FontMono1B font_creep_12 = {
   .ascii_last  = 126,
   .num_glyphs  = 95,
   .glyph_w     = 7,
-  .glyph_h     = 12,
-  .bits        = font_creep_12_bits,
+  .glyph_h           = 12,
+  .extra_line_height = 0,
+  .bits              = font_creep_12_bits,
 };

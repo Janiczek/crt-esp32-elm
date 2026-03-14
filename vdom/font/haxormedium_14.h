@@ -108,6 +108,7 @@ static const FontMono1B font_haxormedium_14 = {
   .ascii_last  = 126,
   .num_glyphs  = 95,
   .glyph_w     = 8,
-  .glyph_h     = 14,
-  .bits        = font_haxormedium_14_bits,
+  .glyph_h           = 14,
+  .extra_line_height = 0,
+  .bits              = font_haxormedium_14_bits,
 };

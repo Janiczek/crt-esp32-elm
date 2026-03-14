@@ -108,6 +108,7 @@ static const FontMono1B font_monogram_extended_9 = {
   .ascii_last  = 126,
   .num_glyphs  = 95,
   .glyph_w     = 8,
-  .glyph_h     = 9,
-  .bits        = font_monogram_extended_9_bits,
+  .glyph_h           = 9,
+  .extra_line_height = 0,
+  .bits              = font_monogram_extended_9_bits,
 };

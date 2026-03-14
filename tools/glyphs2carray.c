@@ -217,9 +217,10 @@ static int process_glyphs(const char *input_path, const char *output_path) {
   fprintf(out, "  .ascii_first = 32,\n");
   fprintf(out, "  .ascii_last  = 126,\n");
   fprintf(out, "  .num_glyphs  = 95,\n");
-  fprintf(out, "  .glyph_w     = %d,\n", glyph_w);
-  fprintf(out, "  .glyph_h     = %d,\n", glyph_h);
-  fprintf(out, "  .bits        = font_%s_bits,\n", font_id);
+  fprintf(out, "  .glyph_w           = %d,\n", glyph_w);
+  fprintf(out, "  .glyph_h           = %d,\n", glyph_h);
+  fprintf(out, "  .extra_line_height = 0,\n");
+  fprintf(out, "  .bits              = font_%s_bits,\n", font_id);
   fprintf(out, "};\n");
 
   fclose(out);

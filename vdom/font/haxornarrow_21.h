@@ -108,6 +108,7 @@ static const FontMono1B font_haxornarrow_21 = {
   .ascii_last  = 126,
   .num_glyphs  = 95,
   .glyph_w     = 8,
-  .glyph_h     = 21,
-  .bits        = font_haxornarrow_21_bits,
+  .glyph_h           = 21,
+  .extra_line_height = 0,
+  .bits              = font_haxornarrow_21_bits,
 };
