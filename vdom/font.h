@@ -1,30 +1,52 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 
 typedef struct FontMono1B {
   const char* name;
-  unsigned char ascii_first;
-  unsigned char ascii_last;
-  int num_glyphs;
-  int glyph_w; // <= 8, so as to fit in a byte
-  int glyph_h;
-  int extra_line_height; // extra rows at top of each line when drawing (0 or 1)
+  uint16_t ascii_first;
+  uint16_t ascii_last;
+  uint16_t num_glyphs;
+  uint8_t glyph_w;  // <= 8, so as to fit in a byte
+  uint8_t glyph_h;
+  uint8_t extra_line_height;  // extra rows at top of each line when drawing (0 or 1)
   const unsigned char *bits;
 } FontMono1B;
 
-static inline bool font_hasChar(const FontMono1B* font, char c) {
+#define NUM_FONTS 4
+
+#include "font/cg_pixel_4x5_mono_5.h"
+#include "font/f5x7_7.h"
+#include "font/spleen_5x8_8.h"
+#include "font/limey_10.h"
+
+const FontMono1B* const fonts[NUM_FONTS] = {
+  &font_cg_pixel_4x5_mono_5,
+  &font_f5x7_7,
+  &font_spleen_5x8_8,
+  &font_limey_10,
+};
+
+static inline uint16_t font_bits_byte_len(const FontMono1B* font) {
+  return (uint16_t)(font->num_glyphs * font->glyph_h * ((font->glyph_w + 7) / 8));
+}
+
+static inline bool font_hasChar(int font_index, char c) {
+  const FontMono1B* font = fonts[font_index];
   unsigned char u = (unsigned char)c;
   return u >= font->ascii_first && u <= font->ascii_last;
 }
 
-static inline int font_textWidth(const char* s, const FontMono1B* font) {
+static inline int font_textWidth(const char* s, int font_index) {
+  const FontMono1B* font = fonts[font_index];
   int n = 0;
   while (s[n]) n++;
   return n * font->glyph_w;
 }
 
-static inline void font_textMultilineSize(const char* s, const FontMono1B* font, int* out_w, int* out_h) {
+static inline void font_textMultilineSize(const char* s, int font_index, int* out_w, int* out_h) {
+  const FontMono1B* font = fonts[font_index];
   int max_w = 0;
   int line_w = 0;
   int line_count = 1;
@@ -34,7 +56,7 @@ static inline void font_textMultilineSize(const char* s, const FontMono1B* font,
       line_w = 0;
       line_count++;
     } else {
-      if (font_hasChar(font, *p))
+      if (font_hasChar(font_index, *p))
         line_w += font->glyph_w;
     }
   }

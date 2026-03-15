@@ -3,101 +3,110 @@
 
 #include "constants.h"
 #include "globals.h"
+#include "font.h"
 #include "node.h"
 #include "node_draw.h"
 #include "dirty.h"
 #include "prelude.h"
-#include "font.h"
-#include "font/cg_pixel_4x5_mono_5.h"
-#include "font/f5x7_7.h"
-#include "font/limey_10.h"
-#include "font/spleen_5x8_8.h"
 
 //----------------------------------------------
 // VDOM-specific
 Node* rootNodeOld;
 Node* rootNodeNew;
 
-// Node pools. Roots live at ROOT_SLOT.
-#define NODE_POOL_SIZE 32
-#define ROOT_SLOT (NODE_POOL_SIZE - 1)
-struct ViewPool {
-  Node nodes[NODE_POOL_SIZE];
-  Node* ptrs[ROOT_SLOT];  // children only; root at nodes[ROOT_SLOT]
-};
-static ViewPool viewPool[2];
-static int viewPoolIndex = 0;
-
-//----------------------------------------------
-// Scene-specific
-
-#define NUM_FONTS 4
-
-const int boxW = 16;
-const int boxH = 16;
-int boxX, boxY, boxDX, boxDY;
-int8_t boxColor; // intentionally -127..127 and overflowing
-
-static const FontMono1B* const fonts[NUM_FONTS] = {
-  &font_cg_pixel_4x5_mono_5,
-  &font_f5x7_7,
-  &font_spleen_5x8_8,
-  &font_limey_10,
-};
-static int fontIndex = 0;
-
-static const char text[] =
-  "!\"#$%&'()*+,-./0123456789:;<=>?@\n"
-  "ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`\n"
-  "abcdefghijklmnopqrstuvwxyz{|}~\n"
-  "\n"
-  "\n"
-  "def greet(name):\n"
-  "    print(f\"Hello, {name}!\")\n"
-  "\n"
-  "greet(\"world\")"
-  "\n"
-  "\n"
-  "int main() {\n"
-  "    cout << \"OHAI\" << endl;\n"
-  "    return 0;\n"
-  "}\n"
-  "\n"
-  "\n"
-  "update : Msg -> Model -> (Model, Cmd Msg)\n"
-  "update msg model =\n"
-  "  case msg of\n"
-  "    Increment ->\n"
-  "      (model + 1, Cmd.none)\n";
-
+// Double-buffered node pools for deserialized trees.
+// Pool that owns rootNodeOld is serialPool[1-serialPoolIndex],
+// Pool that owns rootNodeNew is serialPool[serialPoolIndex].
+static NodePool serialPool[2];
+static int serialPoolIndex = 0;
 
 bool lastBtnPressed = false;
 void handleButton() {
   bool btnPressed = digitalRead(BTN_PIN) == LOW;
   if (!lastBtnPressed && btnPressed) {
-    // could be a callback - application-specific handler of onClick:
-    fontIndex = (fontIndex + 1) % NUM_FONTS;
+    // some onClick handler here
   }
   lastBtnPressed = btnPressed;
 }
 
-Node* view() {
-  ViewPool& pool = viewPool[viewPoolIndex];
-  viewPoolIndex = 1 - viewPoolIndex;
+void onNewRootNode() {
+  // Assumption: something has done this already:
+  // rootNodeOld = rootNodeNew;
+  // rootNodeNew = ... whatever ...;
+  dirty_clear();
+  markDirtyTiles();
+  redrawDirtyTiles();
+}
 
-  int nodeCount = 0;
-  pool.nodes[nodeCount++] = nodeRectFill(nodeCount, boxX,      boxY,       boxW, boxH,             abs(boxColor)); // bouncing box
-  pool.nodes[nodeCount++] = nodeXLine(   nodeCount, X_MIN,     Y_CENTER,   USABLE_W,               COLOR_GRAY);    // x-cross
-  pool.nodes[nodeCount++] = nodeYLine(   nodeCount, X_CENTER,  Y_MIN,      USABLE_H,               COLOR_GRAY);    // y-cross
-  pool.nodes[nodeCount++] = nodeText(    nodeCount, X_MIN + 4, Y_MIN + 2,  text, fonts[fontIndex], COLOR_WHITE);   // text
-  pool.nodes[nodeCount++] = nodeRect(    nodeCount, X_MIN,     Y_MIN,      USABLE_W, USABLE_H,     COLOR_WHITE);   // border
+// Needs to correspond to elm/Command.elm
+enum Cmd {
+  CMD_GET_ESP32_DATA = 0,
+  CMD_SET_ROOT_NODE = 1,
+};
 
-  for (int i = 0; i < nodeCount; i++) {
-    pool.ptrs[i] = &pool.nodes[i];
+void handleSerial() {
+  if (Serial.available()) {
+    uint8_t cmd = Serial.read();
+    switch (cmd) {
+      case CMD_GET_ESP32_DATA: {
+        // Compute the length of the following data to send as an uint16LE
+        uint16_t payload_length = 14;
+        for (int i = 0; i < NUM_FONTS; i++) {
+          const FontMono1B* font = fonts[i];
+          // name as sized string: 1 byte length + strlen(name)
+          uint16_t name_len = (uint16_t)strlen(font->name);
+          payload_length += 13 + name_len + font_bits_byte_len(font);
+        }
+
+        // separator
+        write_u8(0xFF);
+        write_u8(0x00);
+        write_u8(0xFF);
+        write_u8(0x00);
+
+        write_u16_le(payload_length); // length of the following data
+        write_u16_le(DISPLAY_W);
+        write_u16_le(DISPLAY_H);
+        write_u8(MY_CRT_PADDING_L);
+        write_u8(MY_CRT_PADDING_R);
+        write_u8(MY_CRT_PADDING_T);
+        write_u8(MY_CRT_PADDING_B);
+        write_u16_le((uint16_t)MAX_TOTAL_NODES);
+        write_u16_le((uint16_t)NODE_GROUP_MAX_CHILDREN);
+        write_u16_le(NUM_FONTS);
+        for (int i = 0; i < NUM_FONTS; i++) {
+          const FontMono1B* font = fonts[i];
+          write_sized_string(font->name);
+          write_u16_le(font->ascii_first);
+          write_u16_le(font->ascii_last);
+          write_u16_le(font->num_glyphs);
+          write_u8(font->glyph_w);
+          write_u8(font->glyph_h);
+          write_u8(font->extra_line_height);
+          ledOn();
+          write_sized_u8_list(font->bits, font_bits_byte_len(font));
+        }
+        break;
+      }
+      case CMD_SET_ROOT_NODE: {
+        int newPoolIdx = 1 - serialPoolIndex;
+        NodePool* pool = &serialPool[newPoolIdx];
+        node_pool_reset(pool);
+        Node* parsedNode = node_read(pool);
+        if (!parsedNode) break;
+
+        rootNodeOld = rootNodeNew;
+        rootNodeNew = parsedNode;
+        serialPoolIndex = newPoolIdx;
+        onNewRootNode();
+        break;
+      }
+      default: {
+        complain("Unknown command");
+        break;
+      }
+    }
   }
-
-  pool.nodes[ROOT_SLOT] = nodeGroup(0, pool.ptrs, nodeCount);
-  return &pool.nodes[ROOT_SLOT];
 }
 
 // DIFFING
@@ -110,11 +119,16 @@ Node* view() {
 void diffNode(Node* oldRoot, Node* newRoot) {
   if (oldRoot->hash == newRoot->hash) return; // Nothing changed!
 
-  if (oldRoot->type != NODE_GROUP) dirty_mark_bbox(oldRoot->bbox);
-  if (newRoot->type != NODE_GROUP) dirty_mark_bbox(newRoot->bbox);
-
-  if (oldRoot->type == NODE_GROUP && newRoot->type == NODE_GROUP)
+  if (oldRoot->type == NODE_GROUP && newRoot->type == NODE_GROUP) {
     diffChildren(oldRoot, newRoot);
+  } else {
+    // eg. going from TEXT -> GROUP: let's mark both.
+    //
+    // Only in GROUP -> GROUP do we not mark both groups blindly and instead
+    // diff their contents.
+    dirty_mark_bbox(oldRoot->bbox);
+    dirty_mark_bbox(newRoot->bbox);
+  }
 }
 
 void diffChildren(Node* oldGroup, Node* newGroup) {
@@ -125,6 +139,7 @@ void diffChildren(Node* oldGroup, Node* newGroup) {
     Node* newChild = NULL;
     int newIndex = -1;
 
+    // Find by key so that we don't DELETE + INSERT when the node has just moved.
     for (int j = 0; j < newGroup->u.group.child_count; j++) {
       if (oldChild->key == newGroup->u.group.children[j]->key) {
         newChild = newGroup->u.group.children[j];
@@ -152,6 +167,14 @@ void diffChildren(Node* oldGroup, Node* newGroup) {
   }
 }
 
+inline void markDirtyTiles() {
+  diffNode(rootNodeOld, rootNodeNew);
+
+  // TODO workaround - hopefully not needed
+  // // If diff marked no tiles (e.g. identical tree or initial default scene), force draw of new root bbox
+  // if (!dirty_any() && rootNodeNew)
+  //   dirty_mark_bbox(rootNodeNew->bbox);
+}
 
 // implicitly uses `nodeNew` and will walk it back-to-front and draw nodes
 void drawTile(int tx, int ty) {
@@ -191,60 +214,54 @@ void redrawDirtyTiles() {
   });
 }
 
-void updateBoxOnTick() {
-  boxX += boxDX;
-  boxY += boxDY;
-  boxColor += 4; // overflow will handle the rest
-}
-
-void checkBoxBounce() {
-  if      (boxX <= X_MIN)        { boxDX = -boxDX; boxX = X_MIN; }
-  else if (boxX >= X_MAX - boxW) { boxDX = -boxDX; boxX = X_MAX - boxW; }
-  if      (boxY <= Y_MIN)        { boxDY = -boxDY; boxY = Y_MIN; }
-  else if (boxY >= Y_MAX - boxH) { boxDY = -boxDY; boxY = Y_MAX - boxH; }
-}
-
 void setup()
 {
+  // ESP32-specific
+  pinMode(BTN_PIN, INPUT_PULLUP);
+  pinMode(LED_PIN, OUTPUT);
+  Serial.begin(115200);
+
   // esp32lib-specific
   video.init(CompMode::MODENTSC240P, DAC_PIN, HAVE_VOLTAGE_DIVIDER);
 
   // VDOM-specific
-  // both pools get an empty root so old/new point at different buffers
-  viewPool[0].nodes[ROOT_SLOT] = nodeEmpty(0);
-  viewPool[1].nodes[ROOT_SLOT] = nodeEmpty(0);
-  rootNodeOld = &viewPool[0].nodes[ROOT_SLOT];
-  rootNodeNew = &viewPool[1].nodes[ROOT_SLOT];
 
-  // Scene-specific
-  boxX = X_CENTER - boxW/2;
-  boxY = Y_CENTER - boxH/2;
-  boxDX = 1;
-  boxDY = 1;
+  // Old root: empty node
+  serialPool[0].node_cursor = 0;
+  serialPool[0].ptr_cursor = 0;
+  Node* emptyNode = node_pool_alloc(&serialPool[0]);
+  *emptyNode = nodeEmpty(0);
 
-  pinMode(BTN_PIN, INPUT_PULLUP);
+  // New root: initial scene
+  serialPool[1].node_cursor = 0;
+  serialPool[1].ptr_cursor = 0;
+  Node* textNode = node_pool_alloc(&serialPool[1]);
+  char* msg = (char*)malloc(strlen("Waiting for commands from the Command Centre...") + 1);
+  if (!msg) {
+    complain("Failed to allocate memory for default message");
+    *textNode = nodeEmpty(0);
+  } else {
+    strcpy(msg, "Waiting for commands from the Command Centre...");
+    *textNode = nodeText(0, X_MIN, Y_MIN, msg, 0, COLOR_WHITE);
+  }
+
+  rootNodeOld = &serialPool[0].nodes[0];
+  rootNodeNew = &serialPool[1].nodes[0];
+  onNewRootNode();
+
+  serialPoolIndex = 1;
 }
 
 void loop()
 {
-  enforce_fps();
+  // We don't need to react to events etc. faster than 60FPS.
+  // If yes, move this enforceFps() to onNewRootNode().
+  enforceFps();
+
   handleButton();
+  handleSerial();
 
   // Look ma, no clearing the whole buffer before drawing! (It flickered too
   // much and we don't have enough memory for double buffering...)
   // video.clear(0);
-
-  // Diff VDOM trees and mark dirty tiles
-  dirty_clear();
-  diffNode(rootNodeOld, rootNodeNew);
-
-  redrawDirtyTiles();
-
-  // Update any game logic
-  updateBoxOnTick();
-  checkBoxBounce();
-
-  // Generate new VDOM trees
-  rootNodeOld = rootNodeNew;
-  rootNodeNew = view();
 }

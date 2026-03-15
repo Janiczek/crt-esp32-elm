@@ -74,7 +74,7 @@ void node_draw_tileYLine(Node* node, int tx0, int ty0) {
 
 void node_draw_tileText(Node* node, int tx0, int ty0) {
   const char* text = node->u.text.text;
-  const FontMono1B* font = node->u.text.font;
+  int fi = node->u.text.font_index;
   uint8_t color = node->u.text.color;
   int x = node->u.text.x;
   int y = node->u.text.y;
@@ -92,18 +92,18 @@ void node_draw_tileText(Node* node, int tx0, int ty0) {
   int line_y = y;
   for (const char* p = text; *p; ++p) {
     if (*p == '\n') {
-      line_y += font->glyph_h + font->extra_line_height;
+      line_y += fonts[fi]->glyph_h + fonts[fi]->extra_line_height;
       px = x;
       continue;
     }
-    int adv = charAdvance(font, *p);
+    int adv = charAdvance(fi, *p);
     int cx0 = px;
     int cy0 = line_y;
-    int draw_y0 = cy0 + font->extra_line_height;
-    int cx1 = cx0 + font->glyph_w - 1;
-    int cy1 = draw_y0 + font->glyph_h - 1;
+    int draw_y0 = cy0 + fonts[fi]->extra_line_height;
+    int cx1 = cx0 + fonts[fi]->glyph_w - 1;
+    int cy1 = draw_y0 + fonts[fi]->glyph_h - 1;
     if (!(cx1 < tx0 || cx0 > tx1 || cy1 < ty0 || draw_y0 > ty1)) {
-      drawChar(font, cx0, cy0, *p, color);
+      drawChar(fi, cx0, cy0, *p, color);
     }
     px += adv;
   }

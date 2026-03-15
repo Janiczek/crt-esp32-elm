@@ -3,10 +3,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "prelude.h"
 #include "hash.h"
 #include "bbox.h"
 #include "font.h"
+#include "serial.h"
 
+#define MAX_TOTAL_NODES 256
 #define NODE_GROUP_MAX_CHILDREN 32
 
 typedef enum {
@@ -25,19 +28,19 @@ typedef struct Node Node;
 // actual definition
 typedef struct Node {
   NodeType type;
-  uint32_t key;
+  uint8_t key;
   BoundingBox bbox;
   uint32_t hash;
   union {
     struct { int x, y, w, h; uint8_t color; } rect;
     struct { int x, y, len; uint8_t color; } xline;
     struct { int x, y, len; uint8_t color; } yline;
-    struct { int x, y; const char* text; const struct FontMono1B* font; uint8_t color; } text;
+    struct { int x, y; const char* text; int font_index; uint8_t color; } text;
     struct { Node** children; int child_count; } group;
   } u;
 } Node;
 
-static inline Node nodeGroup(uint32_t key, Node** children, int child_count) {
+static inline Node nodeGroup(uint8_t key, Node** children, int child_count) {
   Node n = {};
   n.type = NODE_GROUP;
   n.key = key;
@@ -93,11 +96,11 @@ static inline Node nodeGroup(uint32_t key, Node** children, int child_count) {
   return n;
 }
 
-static inline Node nodeEmpty(uint32_t key) {
+static inline Node nodeEmpty(uint8_t key) {
   return nodeGroup(key, nullptr, 0);
 }
 
-static inline Node nodeRect(uint32_t key, int x, int y, int w, int h, uint8_t color) {
+static inline Node nodeRect(uint8_t key, int x, int y, int w, int h, uint8_t color) {
   Node n = {};
   n.type = NODE_RECT;
   n.key = key;
@@ -118,6 +121,7 @@ static inline Node nodeRect(uint32_t key, int x, int y, int w, int h, uint8_t co
   // HASH
   uint32_t hv = hash_init;
   hv = hash_update_u8(hv, n.type);
+  hv = hash_update_u8(hv, n.key);
   hv = hash_update_u32(hv, (uint32_t)x);
   hv = hash_update_u32(hv, (uint32_t)y);
   hv = hash_update_u32(hv, (uint32_t)w);
@@ -128,7 +132,7 @@ static inline Node nodeRect(uint32_t key, int x, int y, int w, int h, uint8_t co
   return n;
 }
 
-static inline Node nodeRectFill(uint32_t key, int x, int y, int w, int h, uint8_t color) {
+static inline Node nodeRectFill(uint8_t key, int x, int y, int w, int h, uint8_t color) {
   Node n = {};
   n.type = NODE_RECTFILL;
   n.key = key;
@@ -149,6 +153,7 @@ static inline Node nodeRectFill(uint32_t key, int x, int y, int w, int h, uint8_
   // HASH
   uint32_t hv = hash_init;
   hv = hash_update_u8(hv, n.type);
+  hv = hash_update_u8(hv, n.key);
   hv = hash_update_u32(hv, (uint32_t)x);
   hv = hash_update_u32(hv, (uint32_t)y);
   hv = hash_update_u32(hv, (uint32_t)w);
@@ -159,7 +164,7 @@ static inline Node nodeRectFill(uint32_t key, int x, int y, int w, int h, uint8_
   return n;
 }
 
-static inline Node nodeXLine(uint32_t key, int x, int y, int len, uint8_t color) {
+static inline Node nodeXLine(uint8_t key, int x, int y, int len, uint8_t color) {
   Node n = {};
   n.type = NODE_XLINE;
   n.key = key;
@@ -179,6 +184,7 @@ static inline Node nodeXLine(uint32_t key, int x, int y, int len, uint8_t color)
   // HASH
   uint32_t h = hash_init;
   h = hash_update_u8(h, n.type);
+  h = hash_update_u8(h, n.key);
   h = hash_update_u32(h, (uint32_t)x);
   h = hash_update_u32(h, (uint32_t)y);
   h = hash_update_u32(h, (uint32_t)len);
@@ -188,7 +194,7 @@ static inline Node nodeXLine(uint32_t key, int x, int y, int len, uint8_t color)
   return n;
 }
 
-static inline Node nodeYLine(uint32_t key, int x, int y, int len, uint8_t color) {
+static inline Node nodeYLine(uint8_t key, int x, int y, int len, uint8_t color) {
   Node n = {};
   n.type = NODE_YLINE;
   n.key = key;
@@ -208,6 +214,7 @@ static inline Node nodeYLine(uint32_t key, int x, int y, int len, uint8_t color)
   // HASH
   uint32_t h = hash_init;
   h = hash_update_u8(h, n.type);
+  h = hash_update_u8(h, n.key);
   h = hash_update_u32(h, (uint32_t)x);
   h = hash_update_u32(h, (uint32_t)y);
   h = hash_update_u32(h, (uint32_t)len);
@@ -217,7 +224,7 @@ static inline Node nodeYLine(uint32_t key, int x, int y, int len, uint8_t color)
   return n;
 }
 
-static inline Node nodeText(uint32_t key, int x, int y, const char* text, const FontMono1B* font, uint8_t color) {
+static inline Node nodeText(uint8_t key, int x, int y, const char* text, int font_index, uint8_t color) {
   Node n = {};
   n.type = NODE_TEXT;
   n.key = key;
@@ -225,23 +232,24 @@ static inline Node nodeText(uint32_t key, int x, int y, const char* text, const 
   // BBOX
   n.bbox.x = x;
   n.bbox.y = y;
-  font_textMultilineSize(text, font, &n.bbox.w, &n.bbox.h);
+  font_textMultilineSize(text, font_index, &n.bbox.w, &n.bbox.h);
 
   // CONTENT
   n.u.text.x = x;
   n.u.text.y = y;
   n.u.text.text = text;
-  n.u.text.font = font;
+  n.u.text.font_index = font_index;
   n.u.text.color = color;
 
   // HASH
   uint32_t h = hash_init;
   h = hash_update_u8(h, n.type);
+  h = hash_update_u8(h, n.key);
   h = hash_update_u32(h, (uint32_t)x);
   h = hash_update_u32(h, (uint32_t)y);
   h = hash_update_u8(h, color);
   h = hash_update_cstr(h, text);
-  h = hash_update_cstr(h, font->name);
+  h = hash_update_u32(h, (uint32_t)font_index);
   n.hash = h;
 
   return n;
@@ -260,4 +268,145 @@ static inline void nodeWalkPreOrderDFS(Node* root, F&& callback) {
   if (root->type == NODE_GROUP)
     for (int i = 0; i < root->u.group.child_count; i++)
       nodeWalkPreOrderDFS(root->u.group.children[i], callback);
+}
+
+// --- Flattened node pool for deserialization ---
+// All nodes from a single tree live in one contiguous Node array.
+// Group children pointers live in one contiguous Node* array.
+// This allows arbitrary nesting depth with a fixed total node limit.
+
+struct NodePool {
+  Node nodes[MAX_TOTAL_NODES];
+  Node* ptrs[MAX_TOTAL_NODES];
+  int node_cursor;
+  int ptr_cursor;
+};
+
+static inline Node* node_pool_alloc(NodePool* pool) {
+  if (pool->node_cursor >= MAX_TOTAL_NODES) {
+    complain("node_pool_alloc: Node pool full");
+    return nullptr;
+  }
+  return &pool->nodes[pool->node_cursor++];
+}
+
+static inline Node** node_pool_alloc_ptrs(NodePool* pool, int count) {
+  if (pool->ptr_cursor + count > MAX_TOTAL_NODES) {
+    complain("node_pool_alloc_ptrs: Ptr pool full");
+    return nullptr;
+  }
+  Node** base = &pool->ptrs[pool->ptr_cursor];
+  pool->ptr_cursor += count;
+  return base;
+}
+
+// Free all heap memory owned by nodes in a pool
+static inline void node_pool_free(NodePool* pool) {
+  for (int i = 0; i < pool->node_cursor; i++) {
+    // NODE_TEXT strings
+    if (pool->nodes[i].type == NODE_TEXT && pool->nodes[i].u.text.text) {
+      free((void*)pool->nodes[i].u.text.text);
+      pool->nodes[i].u.text.text = nullptr;
+    }
+  }
+}
+
+static inline void node_pool_reset(NodePool* pool) {
+  node_pool_free(pool);
+  pool->node_cursor = 0;
+  pool->ptr_cursor = 0;
+}
+
+// --- Deserialization ---
+
+struct node_read_ctx {
+  NodePool* pool;
+  Node** children_out;
+  int n;
+};
+
+static inline Node* node_read(NodePool* pool);
+
+static inline void node_read_group_element(void* ctx) {
+  struct node_read_ctx* g = (struct node_read_ctx*)ctx;
+  Node* child = node_read(g->pool);
+  if (child && g->children_out) {
+    g->children_out[g->n] = child;
+    g->n++;
+  }
+}
+
+static inline Node* node_read(NodePool* pool) {
+  uint8_t type = read_u8();
+  uint32_t key = (uint32_t)read_u8();
+
+  Node* slot = node_pool_alloc(pool);
+  if (!slot) {
+    complain("node_read() didn't get a slot from the pool");
+    return nullptr;
+  }
+
+  switch (type) {
+    case 0: // NODE_RECT
+      *slot = nodeRect(key,
+        read_i32_le(), // x
+        read_i32_le(), // y
+        read_i32_le(), // w
+        read_i32_le(), // h
+        read_u8()); // color
+      return slot;
+    case 1: // NODE_RECTFILL
+      *slot = nodeRectFill(key,
+        read_i32_le(), // x
+        read_i32_le(), // y
+        read_i32_le(), // w
+        read_i32_le(), // h
+        read_u8()); // color
+      return slot;
+    case 2: // NODE_XLINE
+      *slot = nodeXLine(key,
+        read_i32_le(), // x
+        read_i32_le(), // y
+        read_i32_le(), // len
+        read_u8()); // color
+      return slot;
+    case 3: // NODE_YLINE
+      *slot = nodeYLine(key,
+        read_i32_le(), // x
+        read_i32_le(), // y
+        read_i32_le(), // len
+        read_u8()); // color
+      return slot;
+    case 4: { // NODE_TEXT
+      int x = read_i32_le();
+      int y = read_i32_le();
+      char* str = read_sized_string();
+      int font_index = (int)read_i32_le();
+      uint8_t color = read_u8();
+      *slot = nodeText(key, x, y, str, font_index, color);
+      return slot;
+    }
+    case 5: { // NODE_GROUP
+      uint16_t count = read_u16_le();
+      if (count < 0) {
+        complain("node_read: Negative group count");
+        return nullptr;
+      }
+      Node** children = (count > 0) ? node_pool_alloc_ptrs(pool, count) : nullptr;
+      if (count > 0 && !children) return nullptr;
+      if (count == 0) {
+        *slot = nodeGroup(key, children, count);
+        return slot;
+      }
+      struct node_read_ctx g = { .pool = pool, .children_out = children, .n = 0 };
+      for (uint16_t i = 0; i < count; i++)
+        node_read_group_element(&g);
+      *slot = nodeGroup(key, children, g.n);
+      return slot;
+    }
+    default: {
+      complain("node_read: Unknown node type");
+      return nullptr;
+    }
+  }
 }

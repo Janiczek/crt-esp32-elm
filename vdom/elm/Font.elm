@@ -1,0 +1,31 @@
+module Font exposing (Font, decoder)
+
+import Bytes exposing (Endianness(..))
+import Bytes.Decode
+import Bytes.Decode.Extra
+import BytesExtraExtra
+
+
+type alias Font =
+    { name : String
+    , asciiFirst : Int
+    , asciiLast : Int
+    , numGlyphs : Int
+    , glyphW : Int
+    , glyphH : Int
+    , extraLineHeight : Int
+    , bits : List Int  -- 0..255 (uint8s), glyph bitmaps
+    }
+
+
+decoder : Bytes.Decode.Decoder Font
+decoder =
+    Bytes.Decode.succeed Font
+        |> Bytes.Decode.Extra.andMap BytesExtraExtra.sizedStringDecoder
+        |> Bytes.Decode.Extra.andMap (Bytes.Decode.unsignedInt16 LE)
+        |> Bytes.Decode.Extra.andMap (Bytes.Decode.unsignedInt16 LE)
+        |> Bytes.Decode.Extra.andMap (Bytes.Decode.unsignedInt16 LE)
+        |> Bytes.Decode.Extra.andMap (Bytes.Decode.unsignedInt8)
+        |> Bytes.Decode.Extra.andMap (Bytes.Decode.unsignedInt8)
+        |> Bytes.Decode.Extra.andMap (Bytes.Decode.unsignedInt8)
+        |> Bytes.Decode.Extra.andMap (BytesExtraExtra.sizedListDecoder Bytes.Decode.unsignedInt8)

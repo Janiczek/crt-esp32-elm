@@ -1,11 +1,12 @@
 #pragma once
 
 #define BTN_PIN 0
+#define LED_PIN 2
 #define DAC_PIN 25
 #define HAVE_VOLTAGE_DIVIDER false
 
-#define DISPLAY_W 400 // TODO make sure this is it (print video.xres)
-#define DISPLAY_H 240 // TODO make sure this is it (print video.yres)
+#define DISPLAY_W 400 // These are true for CompMode::MODENTSC240P
+#define DISPLAY_H 240
 
 #define MY_CRT_PADDING_L 25
 #define MY_CRT_PADDING_R 35

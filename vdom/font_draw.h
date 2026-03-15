@@ -5,9 +5,10 @@
 #include "font.h"
 #include "globals.h"
 
-static inline void drawChar(const FontMono1B *font, int x0, int y0, char c, uint8_t color) {
-  if (!font_hasChar(font, c))
+static inline void drawChar(int font_index, int x0, int y0, char c, uint8_t color) {
+  if (!font_hasChar(font_index, c))
     return;
+  const FontMono1B* font = fonts[font_index];
   int idx = (unsigned char)c - font->ascii_first;
   const unsigned char *glyph = font->bits + (unsigned long)idx * font->glyph_h;
 
@@ -26,10 +27,9 @@ static inline void drawChar(const FontMono1B *font, int x0, int y0, char c, uint
   }
 }
 
-static inline int charAdvance(const FontMono1B *font, char c) {
-  if (c == '\n' || !font_hasChar(font, c))
-    return 0;
-  return font->glyph_w;
+static inline int charAdvance(int font_index, char c) {
+  if (c == '\n' || !font_hasChar(font_index, c)) return 0;
+  return fonts[font_index]->glyph_w;
 }
 
 #endif

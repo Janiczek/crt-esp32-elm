@@ -1,2 +1,4 @@
 compile-and-upload: arduino-cli compile --upload -p /dev/tty.usbserial-0001 --fqbn esp32:esp32:esp32
 monitor: arduino-cli monitor -p /dev/tty.usbserial-0001 -c 115200
+elm: lamdera make elm/Main.elm --output elm.js
+open: open index.html
