@@ -20,9 +20,11 @@ import Browser exposing (Document)
 import Bytes exposing (Bytes)
 import Bytes.Decode
 import Bytes.Encode
+import Bytes.Extra
+import Char
+import Color
 import Command
 import ESP32 exposing (ESP32, VideoConstants, videoConstants)
-import Example
 import Font exposing (Font)
 import Html exposing (Html)
 import Html.Attributes
@@ -50,6 +52,7 @@ type alias ModelConnected =
     { esp32 : ESP32
     , videoConstants : VideoConstants
     , lastError : String
+    , textarea : String
     }
 
 
@@ -63,7 +66,7 @@ type Msg
 
 
 type MsgConnected
-    = SetExampleRoot Node
+    = SetTextarea String
 
 
 port connect : () -> Cmd msg
@@ -81,7 +84,8 @@ port onDisconnectSuccessful : (() -> msg) -> Sub msg
 port onFailure : (String -> msg) -> Sub msg
 
 
-port sendCommand : Bytes -> Cmd msg
+port sendCommand : ( Bytes, Bool ) -> Cmd msg
+ 
 
 
 main : Program Flags Model Msg
@@ -108,12 +112,23 @@ update msg model =
             ( model, connect () )
 
         ConnectSuccessful esp32 ->
+            let
+                videoConstants_ =
+                    videoConstants esp32
+
+                textarea =
+                    String.repeat 67 "#"
+                        |> List.repeat 27
+                        |> String.join "\n"
+            in
             ( Connected
                 { esp32 = esp32
-                , videoConstants = videoConstants esp32
+                , videoConstants = videoConstants_
                 , lastError = ""
+                , textarea = textarea
                 }
-            , Cmd.none
+            , setRootNode (textScene videoConstants_ textarea)
+                |> Cmd.map MsgConnected
             )
 
         DisconnectRequested ->
@@ -150,13 +165,25 @@ update msg model =
 updateConnected : MsgConnected -> ModelConnected -> ( ModelConnected, Cmd MsgConnected )
 updateConnected msgConnected modelConnected =
     case msgConnected of
-        SetExampleRoot node ->
+        SetTextarea text ->
             ( modelConnected
-            , Command.SetRootNode node
-                |> Command.encoder
-                |> Bytes.Encode.encode
-                |> sendCommand
+            , text
+                |> textScene modelConnected.videoConstants
+                |> setRootNode
             )
+
+
+
+setRootNode : Node -> Cmd MsgConnected
+setRootNode node =
+    let
+        command =
+            Command.SetRootNode node
+
+        bytes =
+            Command.encoder command |> Bytes.Encode.encode
+    in
+    sendCommand ( bytes, Command.needsAck command )
 
 
 view : Model -> Document Msg
@@ -179,11 +206,11 @@ view_ model =
 viewNotConnected : ModelNotConnected -> Html Msg
 viewNotConnected model =
     Html.div []
-        [ Html.text "Not connected."
+        [ Html.div [] [ Html.text "Not connected." ]
+        , viewLastError model.lastError
         , Html.button
             [ Html.Events.onClick ConnectRequested ]
             [ Html.text "Connect" ]
-        , viewLastError model.lastError
         ]
 
 
@@ -191,28 +218,23 @@ viewConnected : ModelConnected -> Html Msg
 viewConnected model =
     Html.div [] <|
         List.concat
-            [ [ Html.text "Connected."
+            [ [ Html.div [] [ Html.text "Connected." ]
+              , viewLastError model.lastError
               , Html.button
                     [ Html.Events.onClick DisconnectRequested ]
                     [ Html.text "Disconnect" ]
+              , Html.textarea
+                    [ Html.Attributes.cols 80
+                    , Html.Attributes.rows 24
+                    , Html.Events.onInput (MsgConnected << SetTextarea)
+                    ]
+                    [ Html.text model.textarea ]
               , viewDeviceInfo model.esp32 model.videoConstants
               ]
-            , Example.all
-                |> List.map
-                    (\( name, toNode ) ->
-                        let
-                            node =
-                                toNode model.esp32 model.videoConstants
-                        in
-                        Html.button
-                            [ Html.Events.onClick (MsgConnected (SetExampleRoot node)) ]
-                            [ Html.text name ]
-                    )
-            , [ viewLastError model.lastError ]
             ]
 
 
-viewDeviceInfo : ESP32 -> VideoConstants -> Html Msg
+viewDeviceInfo : ESP32 -> VideoConstants -> Html msg
 viewDeviceInfo esp32 vc =
     let
         tableStyle =
@@ -282,7 +304,11 @@ viewDeviceInfo esp32 vc =
 
         fontsSection =
             Html.div [ Html.Attributes.style "margin-top" "1rem" ]
-                [ Html.div [ Html.Attributes.style "font-weight" "600", Html.Attributes.style "font-size" "0.875rem", Html.Attributes.style "margin-bottom" "0.5rem" ]
+                [ Html.div
+                    [ Html.Attributes.style "font-weight" "600"
+                    , Html.Attributes.style "font-size" "0.875rem"
+                    , Html.Attributes.style "margin-bottom" "0.5rem"
+                    ]
                     [ Html.text "Fonts" ]
                 , Html.table (tableStyle ++ [ Html.Attributes.style "width" "100%" ])
                     [ Html.thead []
@@ -310,10 +336,10 @@ viewDeviceInfo esp32 vc =
 
 
 viewFontRow :
-    List (Html.Attribute Msg)
-    -> List (Html.Attribute Msg)
+    List (Html.Attribute msg)
+    -> List (Html.Attribute msg)
     -> Font
-    -> Html Msg
+    -> Html msg
 viewFontRow thStyle tdStyle font =
     Html.tr []
         [ Html.td tdStyle [ Html.text font.name ]
@@ -327,7 +353,7 @@ viewFontRow thStyle tdStyle font =
         ]
 
 
-viewFontBitmap : Font -> Html Msg
+viewFontBitmap : Font -> Html msg
 viewFontBitmap font =
     let
         scale =
@@ -396,7 +422,9 @@ viewFontBitmap font =
         ]
 
 
-viewLastError : String -> Html Msg
+
+
+viewLastError : String -> Html msg
 viewLastError lastError =
     if lastError /= "" then
         Html.div
@@ -410,17 +438,13 @@ viewLastError lastError =
 subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
-        [ onFailure (\error -> FailureOccurred error)
+        [ onFailure FailureOccurred
         , case model of
             NotConnected _ ->
-                Sub.batch
-                    [ onConnectSuccessful_ ConnectSuccessful FailureOccurred
-                    ]
+                    onConnectSuccessful_ ConnectSuccessful FailureOccurred
 
             Connected _ ->
-                Sub.batch
-                    [ onDisconnectSuccessful (\() -> DisconnectSuccessful)
-                    ]
+                    onDisconnectSuccessful (\() -> DisconnectSuccessful)
         ]
 
 
@@ -435,3 +459,15 @@ onConnectSuccessful_ onSuccess onFail =
                 Nothing ->
                     onFail "Failed to decode ESP32 data"
         )
+
+
+textScene : VideoConstants -> String -> Node
+textScene c text =
+    Node 0 <|
+        Node.Text
+            { x = c.xMin + 4
+            , y = c.yMin + 2
+            , text = text
+            , fontIndex = 1
+            , color = Color.white
+            }

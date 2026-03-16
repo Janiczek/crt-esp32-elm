@@ -78,10 +78,16 @@ static inline void write_sized_u8_list(const uint8_t* data, uint16_t count) {
 // Length-prefixed (u16 LE) string: reads length, allocates len+1, reads bytes, NUL-terminates. Caller must free.
 static inline char* read_sized_string(void) {
   uint16_t len = read_u16_le();
-  if (len == 0) return NULL;
-  if (len < 0) {
-    complain("read_sized_string: negative string length");
-    return NULL;
+  if (len == 0) {
+    // Represent empty strings as a valid allocated "" so downstream code
+    // (e.g. font_textMultilineSize) never sees a NULL pointer.
+    char* buf = (char*)malloc(1);
+    if (!buf) {
+      complain("read_sized_string: malloc failed for empty string");
+      return nullptr;
+    }
+    buf[0] = '\0';
+    return buf;
   }
   char* buf = (char*)malloc((size_t)len + 1);
   if (!buf) {

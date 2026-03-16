@@ -39,9 +39,19 @@ inline void dirty_mark_bbox(BoundingBox bbox) {
   int tx1 = (bbox.x + bbox.w - 1) / TILE_SIZE;
   int ty1 = (bbox.y + bbox.h - 1) / TILE_SIZE;
 
+  // If completely off-screen, nothing to do
+  if (tx1 < 0 || ty1 < 0 || tx0 >= TILE_COLS || ty0 >= TILE_ROWS)
+    return;
+
+  // Clamp to valid tile range
+  if (tx0 < 0) tx0 = 0;
+  if (ty0 < 0) ty0 = 0;
+  if (tx1 >= TILE_COLS) tx1 = TILE_COLS - 1;
+  if (ty1 >= TILE_ROWS) ty1 = TILE_ROWS - 1;
+
   for (int ty = ty0; ty <= ty1; ty++)
-      for (int tx = tx0; tx <= tx1; tx++)
-          dirty_mark(tx, ty);
+    for (int tx = tx0; tx <= tx1; tx++)
+      dirty_mark(tx, ty);
 }
 
 inline bool dirty_get(int tx, int ty) {

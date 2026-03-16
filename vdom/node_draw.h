@@ -73,6 +73,8 @@ void node_draw_tileYLine(Node* node, int tx0, int ty0) {
 }
 
 void node_draw_tileText(Node* node, int tx0, int ty0) {
+  if (node->u.text.text == nullptr)
+    return;
   const char* text = node->u.text.text;
   int fi = node->u.text.font_index;
   uint8_t color = node->u.text.color;

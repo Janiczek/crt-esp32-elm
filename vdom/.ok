@@ -1,4 +1,7 @@
 compile-and-upload: arduino-cli compile --upload -p /dev/tty.usbserial-0001 --fqbn esp32:esp32:esp32
+verbose-compile-and-upload: arduino-cli compile -v --upload -p /dev/tty.usbserial-0001 --fqbn esp32:esp32:esp32
+debug: /Users/martin/Library/Arduino15/packages/esp32/tools/xtensa-esp-elf-gdb/16.3_20250913/bin/xtensa-esp32-elf-gdb vdom.ino.elf
+elf: cp /Users/martin/Library/Caches/arduino/sketches/B1E55301CCC7817D86488EEF6F189DFF/vdom.ino.elf ./
 monitor: arduino-cli monitor -p /dev/tty.usbserial-0001 -c 115200
-elm: lamdera make elm/Main.elm --output elm.js
+lamdera: lamdera make elm/Main.elm --output elm.js
 open: open index.html

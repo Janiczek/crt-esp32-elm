@@ -1,4 +1,4 @@
-module Command exposing (Command(..), encoder)
+module Command exposing (Command(..), encoder, needsAck)
 
 import Bytes exposing (Endianness(..))
 import Bytes.Encode
@@ -15,15 +15,28 @@ commandTag command =
     case command of
         GetESP32Data ->
             0
+
         SetRootNode _ ->
             1
+
+
+needsAck : Command -> Bool
+needsAck command =
+    case command of
+        GetESP32Data ->
+            False
+
+        SetRootNode _ ->
+            True
 
 
 encoder : Command -> Bytes.Encode.Encoder
 encoder command =
     [ [ Bytes.Encode.unsignedInt8 (commandTag command) ]
     , case command of
-        GetESP32Data -> []
+        GetESP32Data ->
+            []
+
         SetRootNode node ->
             [ Node.encoder node ]
     ]

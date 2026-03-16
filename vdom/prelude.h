@@ -25,7 +25,18 @@ void ledOn() {
   digitalWrite(LED_PIN, HIGH);
 }
 
+void ledOff() {
+  digitalWrite(LED_PIN, LOW);
+}
+
+void logSerial(const char* msg) {
+  Serial.println(msg);
+  Serial.flush();
+}
+
 void complain(const char* msg) {
+  hasComplained = true;
   ledOn();
   Serial.println(msg);
+  Serial.flush();
 }

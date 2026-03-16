@@ -44,9 +44,32 @@ enum Cmd {
   CMD_SET_ROOT_NODE = 1,
 };
 
+static inline void writeAck() {
+  write_u8(0xFF);
+  write_u8(0xEE);
+  write_u8(0xFF);
+  write_u8(0xEE);
+}
+
+static inline bool commandNeedsAck(uint8_t cmd) {
+  switch(cmd) {
+    case CMD_SET_ROOT_NODE:
+      return true;
+    case CMD_GET_ESP32_DATA:
+      return false;
+    default: {
+      Serial.print("> commandNeedsAck: ");
+      Serial.println(cmd, DEC);
+      complain("commandNeedsAck: Unknown command");
+      return false;
+    }
+  }
+}
+
 void handleSerial() {
   if (Serial.available()) {
     uint8_t cmd = Serial.read();
+    bool ok = false;
     switch (cmd) {
       case CMD_GET_ESP32_DATA: {
         // Compute the length of the following data to send as an uint16LE
@@ -83,9 +106,9 @@ void handleSerial() {
           write_u8(font->glyph_w);
           write_u8(font->glyph_h);
           write_u8(font->extra_line_height);
-          ledOn();
           write_sized_u8_list(font->bits, font_bits_byte_len(font));
         }
+        ok = true;
         break;
       }
       case CMD_SET_ROOT_NODE: {
@@ -93,12 +116,16 @@ void handleSerial() {
         NodePool* pool = &serialPool[newPoolIdx];
         node_pool_reset(pool);
         Node* parsedNode = node_read(pool);
-        if (!parsedNode) break;
+        if (!parsedNode) {
+          if (!hasComplained) complain("Failed to parse root node");
+          break;
+        }
 
         rootNodeOld = rootNodeNew;
         rootNodeNew = parsedNode;
         serialPoolIndex = newPoolIdx;
         onNewRootNode();
+        ok = true;
         break;
       }
       default: {
@@ -106,6 +133,7 @@ void handleSerial() {
         break;
       }
     }
+    if (ok && commandNeedsAck(cmd)) writeAck();
   }
 }
 

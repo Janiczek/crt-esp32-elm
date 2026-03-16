@@ -87,9 +87,9 @@ encoder node =
         Text { x, y, text, fontIndex, color } ->
             [ Bytes.Encode.signedInt32 LE x
             , Bytes.Encode.signedInt32 LE y
-            , BytesExtraExtra.sizedStringEncoder text
             , Bytes.Encode.signedInt32 LE fontIndex
             , Bytes.Encode.unsignedInt8 color
+            , BytesExtraExtra.sizedStringEncoder text
             ]
 
         Group { children } ->

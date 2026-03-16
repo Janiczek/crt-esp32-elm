@@ -2,6 +2,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #include "prelude.h"
 #include "hash.h"
@@ -232,7 +233,12 @@ static inline Node nodeText(uint8_t key, int x, int y, const char* text, int fon
   // BBOX
   n.bbox.x = x;
   n.bbox.y = y;
-  font_textMultilineSize(text, font_index, &n.bbox.w, &n.bbox.h);
+  if (text != nullptr) {
+    font_textMultilineSize(text, font_index, &n.bbox.w, &n.bbox.h);
+  } else {
+    n.bbox.w = 0;
+    n.bbox.h = 0;
+  }
 
   // CONTENT
   n.u.text.x = x;
@@ -248,7 +254,7 @@ static inline Node nodeText(uint8_t key, int x, int y, const char* text, int fon
   h = hash_update_u32(h, (uint32_t)x);
   h = hash_update_u32(h, (uint32_t)y);
   h = hash_update_u8(h, color);
-  h = hash_update_cstr(h, text);
+  if (text != nullptr) h = hash_update_cstr(h, text);
   h = hash_update_u32(h, (uint32_t)font_index);
   n.hash = h;
 
@@ -380,9 +386,9 @@ static inline Node* node_read(NodePool* pool) {
     case 4: { // NODE_TEXT
       int x = read_i32_le();
       int y = read_i32_le();
-      char* str = read_sized_string();
       int font_index = (int)read_i32_le();
       uint8_t color = read_u8();
+      char* str = read_sized_string();
       *slot = nodeText(key, x, y, str, font_index, color);
       return slot;
     }

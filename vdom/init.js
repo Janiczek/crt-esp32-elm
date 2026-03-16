@@ -22,19 +22,133 @@ let webSerialPort;
 let writer;
 let reader;
 
+const ACK_SEQUENCE = [0xFF, 0xEE, 0xFF, 0xEE];
+
+let commandQueue = [];
+let isWaitingForAck = false;
+
+async function trySendNextCommand() {
+    if (isWaitingForAck || commandQueue.length === 0 || !writer) return;
+    const item = commandQueue.shift();
+    try {
+        await writer.write(item.bytes);
+    } catch (e) {
+        complainNonFatal('Failed to send command: ' + e.message);
+        return;
+    }
+    if (item.needsAck) {
+        isWaitingForAck = true;
+    } else {
+        trySendNextCommand();
+    }
+}
+
+function enqueueCommand(bytesView, needsAck) {
+    commandQueue.push({ bytes: bytesView, needsAck });
+    trySendNextCommand();
+}
+
+async function startContinuousRead() {
+    if (!webSerialPort || !webSerialPort.readable) {
+        return;
+    }
+
+    // Acquire a reader dedicated to logging incoming data
+    reader = webSerialPort.readable.getReader();
+
+    (async () => {
+        const TIMEOUT_MS = 20;
+        let buffer = new Uint8Array(0);
+        let flushTimeoutId = null;
+        const decoder = new TextDecoder();
+        let ackMatched = 0;
+
+        const scanForAck = (chunk) => {
+            for (let i = 0; i < chunk.length; i++) {
+                if (chunk[i] === ACK_SEQUENCE[ackMatched]) {
+                    ackMatched++;
+                    if (ackMatched === ACK_SEQUENCE.length) {
+                        ackMatched = 0;
+                        isWaitingForAck = false;
+                        trySendNextCommand();
+                    }
+                } else {
+                    ackMatched = chunk[i] === ACK_SEQUENCE[0] ? 1 : 0;
+                }
+            }
+        };
+
+        const scheduleFlush = () => {
+            if (flushTimeoutId !== null) {
+                clearTimeout(flushTimeoutId);
+            }
+            flushTimeoutId = setTimeout(() => {
+                if (buffer.length > 0) {
+                    const text = decoder.decode(buffer);
+                    console.log('Serial data:', text);
+                    buffer = new Uint8Array(0);
+                }
+                flushTimeoutId = null;
+            }, TIMEOUT_MS);
+        };
+
+        const appendToBuffer = (chunk) => {
+            if (!chunk || chunk.length === 0) {
+                return;
+            }
+            const combined = new Uint8Array(buffer.length + chunk.length);
+            combined.set(buffer, 0);
+            combined.set(chunk, buffer.length);
+            buffer = combined;
+        };
+
+        try {
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) {
+                    break;
+                }
+                scanForAck(value);
+                appendToBuffer(value);
+                scheduleFlush();
+            }
+        } catch (e) {
+            if (e.name !== 'NetworkError') {
+                complainNonFatal('Failed during continuous serial read: ' + e.message);
+            }
+        } finally {
+            if (flushTimeoutId !== null) {
+                clearTimeout(flushTimeoutId);
+                flushTimeoutId = null;
+            }
+            if (buffer.length > 0) {
+                const text = decoder.decode(buffer);
+                console.log('Serial data:', text);
+            }
+            try {
+                reader.releaseLock();
+            } catch (_) {}
+            reader = null;
+        }
+    })();
+}
+
 app.ports.connect.subscribe(async () => {
     try {
         // init Web Serial
         webSerialPort = await navigator.serial.requestPort();
         await webSerialPort.open({ baudRate: 115200 });
         writer = webSerialPort.writable.getWriter();
-        reader = webSerialPort.readable.getReader();
+        const initReader = webSerialPort.readable.getReader();
 
         writer.write(new Uint8Array([0x00])); // 0x00 -> please send current ESP32 data
 
-        const esp32Data = await readEsp32Data();
+        const esp32Data = await readEsp32Data(initReader);
         const dataView = new DataView(esp32Data);
         app.ports.onConnectSuccessful.send(dataView);
+
+        // After initial handshake, start logging all subsequent data
+        startContinuousRead();
     } catch (e) {
         complainNonFatal('Failed to connect: ' + e.message);
     }
@@ -44,14 +158,24 @@ app.ports.disconnect.subscribe(async () => {
     if (reader)        { try { await reader.cancel();       } catch (_) {} reader = null; }
     if (writer)        { try { await writer.close();        } catch (_) {} writer = null; }
     if (webSerialPort) { try { await webSerialPort.close(); } catch (_) {} webSerialPort = null; }
+    commandQueue = [];
+    isWaitingForAck = false;
     app.ports.onDisconnectSuccessful.send();
 })
 
-app.ports.sendCommand.subscribe((bytes) => {
+app.ports.sendCommand.subscribe(([commandBytes, needsAck]) => {
+    try {
+        const view = new Uint8Array(commandBytes.buffer, commandBytes.byteOffset, commandBytes.byteLength);
+        console.log('sendCommand bytes (length, bytes, needsAck):', view.length, Array.from(view), needsAck);
+    } catch (e) {
+        console.error('Failed to inspect sendCommand bytes:', e);
+    }
+
     if (writer) {
-        writer.write(bytes);
+        const bytes = new Uint8Array(commandBytes.buffer, commandBytes.byteOffset, commandBytes.byteLength);
+        enqueueCommand(bytes, needsAck);
     } else {
-        complainNonFatal('Cannot send command: not connected')
+        complainNonFatal('Cannot send command: not connected');
     }
 })
 
@@ -100,9 +224,9 @@ function byteStream(reader) {
 
 const SEPARATOR = [0xff, 0x00, 0xff, 0x00];
 
-async function readEsp32Data() {
+async function readEsp32Data(readerForInit) {
     try {
-        const stream = byteStream(reader);
+        const stream = byteStream(readerForInit);
 
         let matched = 0;
         while (matched < SEPARATOR.length) {
@@ -122,6 +246,8 @@ async function readEsp32Data() {
             complainNonFatal('Failed to read ESP32 data: ' + e.message);
         }
     } finally {
-        reader.releaseLock();
+        try {
+            readerForInit.releaseLock();
+        } catch (_) {}
     }
 }
