@@ -149,6 +149,17 @@ void diffNode(Node* oldRoot, Node* newRoot) {
 
   if (oldRoot->type == NODE_GROUP && newRoot->type == NODE_GROUP) {
     diffChildren(oldRoot, newRoot);
+  } else if (// Text-vs-Text when only the text changed
+             oldRoot->type == NODE_TEXT && newRoot->type == NODE_TEXT &&
+             oldRoot->u.text.x == newRoot->u.text.x &&
+             oldRoot->u.text.y == newRoot->u.text.y &&
+             oldRoot->u.text.font_index == newRoot->u.text.font_index &&
+             oldRoot->u.text.color == newRoot->u.text.color) {
+    const FontMono1B* font = fonts[oldRoot->u.text.font_index];
+    int gw = (int)font->glyph_w;
+    int lineHeight = (int)font->glyph_h + (int)font->extra_line_height;
+    dirty_mark_text_diff(oldRoot->u.text.text, newRoot->u.text.text,
+                         oldRoot->u.text.x, oldRoot->u.text.y, gw, lineHeight);
   } else {
     // eg. going from TEXT -> GROUP: let's mark both.
     //

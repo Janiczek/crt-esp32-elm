@@ -85,7 +85,6 @@ port onFailure : (String -> msg) -> Sub msg
 
 
 port sendCommand : ( Bytes, Bool ) -> Cmd msg
- 
 
 
 main : Program Flags Model Msg
@@ -105,6 +104,16 @@ init () =
     )
 
 
+terminalW : Int
+terminalW =
+    67
+
+
+terminalH : Int
+terminalH =
+    27
+
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
@@ -117,8 +126,8 @@ update msg model =
                     videoConstants esp32
 
                 textarea =
-                    String.repeat 67 "#"
-                        |> List.repeat 27
+                    String.repeat terminalW "#"
+                        |> List.repeat terminalH
                         |> String.join "\n"
             in
             ( Connected
@@ -173,7 +182,6 @@ updateConnected msgConnected modelConnected =
             )
 
 
-
 setRootNode : Node -> Cmd MsgConnected
 setRootNode node =
     let
@@ -224,8 +232,8 @@ viewConnected model =
                     [ Html.Events.onClick DisconnectRequested ]
                     [ Html.text "Disconnect" ]
               , Html.textarea
-                    [ Html.Attributes.cols 80
-                    , Html.Attributes.rows 24
+                    [ Html.Attributes.cols terminalW
+                    , Html.Attributes.rows terminalH
                     , Html.Events.onInput (MsgConnected << SetTextarea)
                     ]
                     [ Html.text model.textarea ]
@@ -422,8 +430,6 @@ viewFontBitmap font =
         ]
 
 
-
-
 viewLastError : String -> Html msg
 viewLastError lastError =
     if lastError /= "" then
@@ -441,10 +447,10 @@ subscriptions model =
         [ onFailure FailureOccurred
         , case model of
             NotConnected _ ->
-                    onConnectSuccessful_ ConnectSuccessful FailureOccurred
+                onConnectSuccessful_ ConnectSuccessful FailureOccurred
 
             Connected _ ->
-                    onDisconnectSuccessful (\() -> DisconnectSuccessful)
+                onDisconnectSuccessful (\() -> DisconnectSuccessful)
         ]
 
 

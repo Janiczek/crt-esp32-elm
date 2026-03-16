@@ -70,3 +70,63 @@ inline void dirty_foreach(void (*cb)(int tx, int ty)) {
         }
     }
 }
+
+// Marks tiles for one character cell. Same layout as node_draw_tileText.
+// font, gw, lineHeight must be precomputed from the text node (e.g. at start of dirty_mark_text_diff).
+static inline void dirty_mark_char_cell(int x, int y, int row, int col, int gw, int lineHeight) {
+  BoundingBox bbox = { x + col * gw, y + row * lineHeight, gw, lineHeight };
+  dirty_mark_bbox(bbox);
+}
+
+// Text-vs-text: only mark tiles for character cells that actually changed.
+// oldStr/newStr may be null (treated as empty).
+static void dirty_mark_text_diff(const char* oldStr, const char* newStr, int x, int y, int gw, int lineHeight) {
+  const char* o = oldStr ? oldStr : "";
+  const char* n = newStr ? newStr : "";
+
+  int iOld = 0, iNew = 0, row = 0, col = 0;
+  for (;;) {
+    char cOld = o[iOld];
+    char cNew = n[iNew];
+
+    if (cOld == '\0') {
+      while (n[iNew] != '\0') {
+        dirty_mark_char_cell(x, y, row, col, gw, lineHeight);
+        if (n[iNew] == '\n') { iNew++; row++; col = 0; } else { iNew++; col++; }
+      }
+      return;
+    }
+    if (cNew == '\0') {
+      while (o[iOld] != '\0') {
+        dirty_mark_char_cell(x, y, row, col, gw, lineHeight);
+        if (o[iOld] == '\n') { iOld++; row++; col = 0; } else { iOld++; col++; }
+      }
+      return;
+    }
+    if (cOld == '\n' && cNew == '\n') {
+      iOld++; iNew++; row++; col = 0;
+      continue;
+    }
+    if (cOld == '\n') {
+      while (cNew != '\0' && cNew != '\n') {
+        dirty_mark_char_cell(x, y, row, col, gw, lineHeight);
+        col++; iNew++; cNew = n[iNew];
+      }
+      if (cNew == '\n') iNew++;
+      iOld++; row++; col = 0;
+      continue;
+    }
+    if (cNew == '\n') {
+      while (cOld != '\0' && cOld != '\n') {
+        dirty_mark_char_cell(x, y, row, col, gw, lineHeight);
+        col++; iOld++; cOld = o[iOld];
+      }
+      if (cOld == '\n') iOld++;
+      iNew++; row++; col = 0;
+      continue;
+    }
+    if (cOld != cNew)
+      dirty_mark_char_cell(x, y, row, col, gw, lineHeight);
+    col++; iOld++; iNew++;
+  }
+}
