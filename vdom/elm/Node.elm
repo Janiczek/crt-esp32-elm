@@ -1,4 +1,4 @@
-module Node exposing (Node, Type(..), encoder, group, rect, rectFill, text, xLine, yLine)
+module Node exposing (Node, Type(..), encoder, group, rect, rectFill, text, xLine, yLine, empty)
 
 import BoundingBox exposing (BoundingBox)
 import Bytes exposing (Endianness(..))
@@ -78,6 +78,9 @@ group : String -> List Node -> Node
 group key children =
     node Group [] key { children = children }
 
+empty : Node
+empty =
+    node Group [] "" { children = [] }
 
 node : (a -> Type) -> List Font -> String -> a -> Node
 node toType fonts key config =

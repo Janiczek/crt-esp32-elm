@@ -1,16 +1,21 @@
 module Dirty exposing
     ( TileGrid
+    , diff, dirtyTilesEncoder
     , markBbox_TEST, textCellsUntilNewline_TEST, changedTextCells_TEST, allTextCells_TEST
     )
 
 {-|
 
 @docs TileGrid
+@docs diff, dirtyTilesEncoder
 @docs markBbox_TEST, textCellsUntilNewline_TEST, changedTextCells_TEST, allTextCells_TEST
 
 -}
 
 import BoundingBox exposing (BoundingBox)
+import Bytes exposing (Endianness(..))
+import Bytes.Encode
+import BytesExtraExtra
 import Dict exposing (Dict)
 import Font exposing (Font)
 import List.Cartesian
@@ -24,6 +29,21 @@ type alias TileGrid =
     , tileCols : Int
     , tileRows : Int
     }
+
+
+dirtyTilesEncoder : Set ( Int, Int ) -> Bytes.Encode.Encoder
+dirtyTilesEncoder tiles =
+    let
+        pairs =
+            Set.toList tiles
+
+        encodePair ( tx, ty ) =
+            Bytes.Encode.sequence
+                [ Bytes.Encode.unsignedInt8 tx
+                , Bytes.Encode.unsignedInt8 ty
+                ]
+    in
+    BytesExtraExtra.sizedListEncoder encodePair pairs
 
 
 diff : TileGrid -> List Font -> Node -> Node -> Set ( Int, Int )

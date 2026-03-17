@@ -22,6 +22,7 @@ import Bytes.Decode
 import Bytes.Encode
 import Color
 import Command
+import Dirty
 import ESP32 exposing (ESP32, VideoConstants, videoConstants)
 import Font exposing (Font)
 import Html exposing (Html)
@@ -52,6 +53,7 @@ type alias ModelConnected =
     , videoConstants : VideoConstants
     , lastError : String
     , textarea : String
+    , rootNode : Node
     }
 
 
@@ -128,14 +130,18 @@ update msg model =
                     String.repeat terminalW "#"
                         |> List.repeat terminalH
                         |> String.join "\n"
+
+                rootNode =
+                    Node.empty
             in
             ( Connected
                 { esp32 = esp32
                 , videoConstants = videoConstants_
                 , lastError = ""
                 , textarea = textarea
+                , rootNode = rootNode
                 }
-            , setRootNode (textScene esp32 videoConstants_ textarea)
+            , sendTextareaScene rootNode esp32 videoConstants_ textarea
                 |> Cmd.map MsgConnected
             )
 
@@ -175,17 +181,31 @@ updateConnected msgConnected modelConnected =
     case msgConnected of
         SetTextarea text ->
             ( modelConnected
-            , text
-                |> textScene modelConnected.esp32 modelConnected.videoConstants
-                |> setRootNode
+            , sendTextareaScene modelConnected.rootNode modelConnected.esp32 modelConnected.videoConstants text
             )
 
 
-setRootNode : Node -> Cmd MsgConnected
-setRootNode node =
+sendTextareaScene : Node -> ESP32 -> VideoConstants -> String -> Cmd MsgConnected
+sendTextareaScene rootNode esp32 videoConstants text =
+    text
+        |> textScene esp32 videoConstants
+        |> setRootNode esp32 videoConstants rootNode
+
+
+setRootNode : ESP32 -> VideoConstants -> Node -> Node -> Cmd MsgConnected
+setRootNode esp32 videoConstants previousNode node =
     let
         command =
             Command.SetRootNode node
+                (Dirty.diff
+                    { tileSize = esp32.tileSize
+                    , tileCols = videoConstants.tileCols
+                    , tileRows = videoConstants.tileRows
+                    }
+                    esp32.fonts
+                    previousNode
+                    node
+                )
 
         bytes =
             Command.encoder command |> Bytes.Encode.encode

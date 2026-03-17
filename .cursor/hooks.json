@@ -3,7 +3,7 @@
   "hooks": {
     "stop": [
       {
-        "command": ".cursor/hooks/stop.sh"
+        "command": ".cursor/hooks/stop"
       }
     ]
   }
