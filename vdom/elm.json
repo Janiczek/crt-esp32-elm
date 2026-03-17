@@ -16,6 +16,7 @@
             "elm/svg": "1.0.1",
             "elm-community/html-extra": "3.4.0",
             "elmcraft/core-extra": "2.3.0",
+            "folkertdev/elm-flate": "2.0.5",
             "lamdera/codecs": "1.0.0",
             "lamdera/core": "1.0.0"
         },
@@ -25,7 +26,8 @@
             "elm/regex": "1.0.0",
             "elm/time": "1.0.0",
             "elm/url": "1.0.0",
-            "elm/virtual-dom": "1.0.5"
+            "elm/virtual-dom": "1.0.5",
+            "elm-community/list-extra": "8.7.0"
         }
     },
     "test-dependencies": {

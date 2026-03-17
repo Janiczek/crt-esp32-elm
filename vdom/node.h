@@ -312,7 +312,7 @@ static inline Node* node_read(NodePool* pool) {
       int y = read_i32_le();
       int font_index = (int)read_i32_le();
       uint8_t color = read_u8();
-      char* str = read_sized_string();
+      char* str = read_sized_compressed_string();
       *slot = nodeText(x, y, str, font_index, color);
       return slot;
     }

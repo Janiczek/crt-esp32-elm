@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include "miniz.h"
 
 #include "prelude.h"
 
@@ -98,4 +99,57 @@ static inline char* read_sized_string(void) {
     buf[i] = (char)read_u8();
   buf[len] = '\0';
   return buf;
+}
+
+// Zlib-compressed length-prefixed string: u16 decompressed_len, u16 compressed_len, then
+// compressed_len bytes of zlib data. Allocates decompressed_len+1, NUL-terminates. Caller must free.
+static inline char* read_sized_compressed_string(void) {
+  uint16_t decompressed_len = read_u16_le();
+  uint16_t compressed_len = read_u16_le();
+  if (decompressed_len == 0) {
+    char* buf = (char*)malloc(1);
+    if (!buf) {
+      complain("read_sized_compressed_string: malloc failed for empty string");
+      return nullptr;
+    }
+    buf[0] = '\0';
+    return buf;
+  }
+  uint8_t* inbuf = (uint8_t*)malloc(compressed_len);
+  if (!inbuf) {
+    complain("read_sized_compressed_string: malloc inbuf failed");
+    return nullptr;
+  }
+  for (uint16_t i = 0; i < compressed_len; ++i)
+    inbuf[i] = read_u8();
+  char* outbuf = (char*)malloc((size_t)decompressed_len + 1);
+  if (!outbuf) {
+    complain("read_sized_compressed_string: malloc outbuf failed");
+    free(inbuf);
+    return nullptr;
+  }
+  // tinfl_decompressor is ~32KB; ESP32 loop task stack is small — keep it in BSS.
+  static tinfl_decompressor decomp;
+  tinfl_init(&decomp);
+  size_t inpos = 0, outpos = 0;
+  const int flags = TINFL_FLAG_PARSE_ZLIB_HEADER | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF;
+  for (;;) {
+    size_t inbytes = (size_t)compressed_len - inpos;
+    size_t outbytes = (size_t)decompressed_len - outpos;
+    tinfl_status st = tinfl_decompress(&decomp, &inbuf[inpos], &inbytes,
+        (mz_uint8*)outbuf, (mz_uint8*)&outbuf[outpos], &outbytes, (mz_uint32)flags);
+    inpos += inbytes;
+    outpos += outbytes;
+    if (st == TINFL_STATUS_DONE)
+      break;
+    if (st < TINFL_STATUS_DONE) {
+      complain("read_sized_compressed_string: tinfl_decompress failed");
+      free(inbuf);
+      free(outbuf);
+      return nullptr;
+    }
+  }
+  free(inbuf);
+  outbuf[decompressed_len] = '\0';
+  return outbuf;
 }

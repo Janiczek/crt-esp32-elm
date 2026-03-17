@@ -4,6 +4,7 @@ import BoundingBox exposing (BoundingBox)
 import Bytes exposing (Endianness(..))
 import Bytes.Encode
 import BytesExtraExtra
+import Flate
 import Color exposing (Color)
 import FNV1a
 import Font exposing (Font)
@@ -293,12 +294,38 @@ encoder node_ =
                         ]
 
                     Text r ->
+                        let
+                            raw =
+                                Bytes.Encode.encode (Bytes.Encode.string r.text)
+
+                            decompressedLen =
+                                Bytes.width raw
+
+                            textPayload =
+                                if decompressedLen == 0 then
+                                    [ Bytes.Encode.unsignedInt16 LE 0
+                                    , Bytes.Encode.unsignedInt16 LE 0
+                                    ]
+
+                                else
+                                    let
+                                        compressed =
+                                            Flate.deflateZlib raw
+
+                                        compressedLen =
+                                            Bytes.width compressed
+                                    in
+                                    [ Bytes.Encode.unsignedInt16 LE decompressedLen
+                                    , Bytes.Encode.unsignedInt16 LE compressedLen
+                                    , Bytes.Encode.bytes compressed
+                                    ]
+                        in
                         [ Bytes.Encode.signedInt32 LE r.x
                         , Bytes.Encode.signedInt32 LE r.y
                         , Bytes.Encode.signedInt32 LE r.fontIndex
                         , Bytes.Encode.unsignedInt8 r.color
-                        , BytesExtraExtra.sizedStringEncoder r.text
                         ]
+                            ++ textPayload
 
                     Group r ->
                         [ BytesExtraExtra.sizedListEncoder encoder r.children
