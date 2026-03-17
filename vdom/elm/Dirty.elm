@@ -76,6 +76,9 @@ diff grid fonts oldRoot newRoot =
                         markRectBorder grid newRoot.bbox
                 in
                 Set.union (Set.diff oldBorder newBorder) (Set.diff newBorder oldBorder)
+            
+            (Group g1, Group g2) ->
+                diffChildren grid fonts g1.children g2.children
 
             _ ->
                 Set.union (markBbox grid oldRoot.bbox) (markBbox grid newRoot.bbox)
