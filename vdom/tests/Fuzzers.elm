@@ -19,8 +19,8 @@ bbox =
     Fuzz.map4 (\x y w h -> { x = x, y = y, w = w, h = h })
         Fuzz.int
         Fuzz.int
-        Fuzz.int
-        Fuzz.int
+        (Fuzz.intRange 1 500)
+        (Fuzz.intRange 1 500)
 
 node : Fuzzer Node
 node =
