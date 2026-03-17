@@ -14,7 +14,7 @@ type alias Font =
     , glyphWidth : Int
     , glyphHeight : Int
     , extraLineHeight : Int
-    , bits : List Int  -- 0..255 (uint8s), glyph bitmaps
+    , bits : List Int -- 0..255 (uint8s), glyph bitmaps
     }
 
 
@@ -25,7 +25,7 @@ decoder =
         |> Bytes.Decode.Extra.andMap (Bytes.Decode.unsignedInt16 LE)
         |> Bytes.Decode.Extra.andMap (Bytes.Decode.unsignedInt16 LE)
         |> Bytes.Decode.Extra.andMap (Bytes.Decode.unsignedInt16 LE)
-        |> Bytes.Decode.Extra.andMap (Bytes.Decode.unsignedInt8)
-        |> Bytes.Decode.Extra.andMap (Bytes.Decode.unsignedInt8)
-        |> Bytes.Decode.Extra.andMap (Bytes.Decode.unsignedInt8)
+        |> Bytes.Decode.Extra.andMap Bytes.Decode.unsignedInt8
+        |> Bytes.Decode.Extra.andMap Bytes.Decode.unsignedInt8
+        |> Bytes.Decode.Extra.andMap Bytes.Decode.unsignedInt8
         |> Bytes.Decode.Extra.andMap (BytesExtraExtra.sizedListDecoder Bytes.Decode.unsignedInt8)

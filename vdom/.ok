@@ -7,3 +7,5 @@ lamdera: lamdera make elm/Main.elm --output elm.js
 open: open index.html
 test: elm-test --compiler=lamdera
 watch: elm-test --compiler=lamdera --watch
+many: elm-test --compiler=lamdera --fuzz 10000
+format: elm-format --yes elm/**/*.elm

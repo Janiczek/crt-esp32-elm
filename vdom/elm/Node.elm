@@ -1,4 +1,4 @@
-module Node exposing (Node, Type(..), encoder, group, rect, rectFill, text, xLine, yLine, empty)
+module Node exposing (Node, Type(..), empty, encoder, group, rect, rectFill, text, xLine, yLine)
 
 import BoundingBox exposing (BoundingBox)
 import Bytes exposing (Endianness(..))
@@ -61,7 +61,7 @@ rect =
 
 rectFill : String -> { x : Int, y : Int, w : Int, h : Int, color : Color } -> Node
 rectFill =
-    node Rect []
+    node RectFill []
 
 
 xLine : String -> { x : Int, y : Int, len : Int, color : Color } -> Node
@@ -78,9 +78,11 @@ group : String -> List Node -> Node
 group key children =
     node Group [] key { children = children }
 
+
 empty : Node
 empty =
     node Group [] "" { children = [] }
+
 
 node : (a -> Type) -> List Font -> String -> a -> Node
 node toType fonts key config =

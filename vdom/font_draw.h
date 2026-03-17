@@ -5,7 +5,9 @@
 #include "font.h"
 #include "globals.h"
 
-static inline void drawChar(int font_index, int x0, int y0, char c, uint8_t color) {
+/* Draw glyph only inside the rectangle [rx0,ry0]..[rx1,ry1] (inclusive). */
+static inline void drawCharInRect(int font_index, int x0, int y0, char c, uint8_t color,
+    int rx0, int ry0, int rx1, int ry1) {
   if (!font_hasChar(font_index, c))
     return;
   const FontMono1B* font = fonts[font_index];
@@ -17,7 +19,8 @@ static inline void drawChar(int font_index, int x0, int y0, char c, uint8_t colo
     for (int col = 0; col < font->glyph_w; col++) {
       int px = x0 + col;
       int py = y_top + row;
-      if (px >= 0 && px < video.xres && py >= 0 && py < video.yres) {
+      if (px >= rx0 && px <= rx1 && py >= ry0 && py <= ry1 &&
+          px >= 0 && px < video.xres && py >= 0 && py < video.yres) {
         int byteIdx = row;
         int bitIdx  = 7 - (col % 8);
         if ((glyph[byteIdx] >> bitIdx) & 1)

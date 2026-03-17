@@ -1,7 +1,7 @@
 module FNV1a exposing
     ( initialSeed
-    , updateInt32
     , updateInt16
+    , updateInt32
     , updateInt8
     , updateString
     )
@@ -43,6 +43,7 @@ updateInt8 : Int -> Int -> Int
 updateInt8 value seed =
     step seed (Bitwise.and 0xFF value)
 
+
 {-| Feed a signed 16-bit integer (two bytes, little-endian) into the hash.
 -}
 updateInt16 : Int -> Int -> Int
@@ -54,6 +55,7 @@ updateInt16 value seed =
     seed
         |> step (Bitwise.and 0xFF v)
         |> step (Bitwise.and 0xFF (Bitwise.shiftRightZfBy 8 v))
+
 
 {-| Feed a signed 32-bit integer (four bytes, little-endian) into the hash.
 -}

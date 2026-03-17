@@ -1,14 +1,14 @@
 module Dirty exposing
     ( TileGrid
     , diff, dirtyTilesEncoder
-    , diffChildren_TEST, markBbox_TEST, markRectBorder_TEST, textCellsUntilNewline_TEST, changedTextCells_TEST, allTextCells_TEST
+    , diffChildren_TEST, markBbox_TEST, markRectBorder_TEST, textCellsUntilNewline_TEST, changedTextCells_TEST, allTextCells_TEST, textCellToGlyphBbox_TEST
     )
 
 {-|
 
 @docs TileGrid
 @docs diff, dirtyTilesEncoder
-@docs diffChildren_TEST, markBbox_TEST, markRectBorder_TEST, textCellsUntilNewline_TEST, changedTextCells_TEST, allTextCells_TEST
+@docs diffChildren_TEST, markBbox_TEST, markRectBorder_TEST, textCellsUntilNewline_TEST, changedTextCells_TEST, allTextCells_TEST, textCellToGlyphBbox_TEST
 
 -}
 
@@ -61,23 +61,35 @@ diff grid fonts oldRoot newRoot =
 
                         Just font ->
                             changedTextCells oldT.text newT.text
-                                |> Set.fromList
-                                |> Set.map (textCellToTile grid oldT font)
+                                |> List.map (textCellToGlyphBbox oldT font)
+                                |> List.map (markBbox grid)
+                                |> List.foldl Set.union Set.empty
 
                 else
                     Set.union (markBbox grid oldRoot.bbox) (markBbox grid newRoot.bbox)
 
-            ( Rect _, Rect _ ) ->
-                let
-                    oldBorder =
-                        markRectBorder grid oldRoot.bbox
+            ( Rect r1, Rect r2 ) ->
+                if r1.color /= r2.color then
+                    Set.union (markRectBorder grid oldRoot.bbox) (markRectBorder grid newRoot.bbox)
 
-                    newBorder =
-                        markRectBorder grid newRoot.bbox
-                in
-                Set.union (Set.diff oldBorder newBorder) (Set.diff newBorder oldBorder)
-            
-            (Group g1, Group g2) ->
+                else
+                    let
+                        oldBorder =
+                            markRectBorder grid oldRoot.bbox
+
+                        newBorder =
+                            markRectBorder grid newRoot.bbox
+
+                        geometryChange =
+                            Set.union (Set.diff oldBorder newBorder) (Set.diff newBorder oldBorder)
+                    in
+                    if geometryChange == Set.empty && oldRoot.bbox == newRoot.bbox then
+                        newBorder
+
+                    else
+                        geometryChange
+
+            ( Group g1, Group g2 ) ->
                 diffChildren grid fonts g1.children g2.children
 
             _ ->
@@ -154,10 +166,21 @@ diffChildren grid fonts oldChildren newChildren =
                 |> List.filterMap (\key -> Dict.get key old)
                 |> List.map (\n -> markBbox grid n.bbox)
                 |> List.foldl Set.union Set.empty
+
+        -- TODO think about this more...
+        reorderTiles =
+            if oldKeys == newKeys && List.map .key oldChildren /= List.map .key newChildren then
+                newChildren
+                    |> List.map (\n -> markBbox grid n.bbox)
+                    |> List.foldl Set.union Set.empty
+
+            else
+                Set.empty
     in
     updateTiles
         |> Set.union insertionTiles
         |> Set.union deletionTiles
+        |> Set.union reorderTiles
 
 
 {-| Mark all tiles overlapping a bounding box. Clamps to valid tile range.
@@ -223,56 +246,42 @@ markRectBorder grid bbox =
 
 
 {-| Finds character cells (not tiles!) that differ between old and new text.
-This will later be used to mark tiles as dirty, with the knowledge of the font dimensions.
 -}
 changedTextCells : String -> String -> List ( Int, Int )
 changedTextCells oldStr newStr =
     let
-        step : List Char -> List Char -> Int -> Int -> List ( Int, Int ) -> List ( Int, Int )
-        step accOld accNew row col acc =
-            case ( accOld, accNew ) of
-                ( [], [] ) ->
-                    acc
+        charsToCellCharDict : List Char -> Dict ( Int, Int ) Char
+        charsToCellCharDict chars =
+            chars
+                |> allTextCells 0 0
+                |> List.map (\( r, c, char ) -> ( ( r, c ), char ))
+                |> Dict.fromList
 
-                ( [], _ ) ->
-                    -- old string is empty, add all cells from new
-                    acc ++ allTextCells row col accNew
+        oldDict : Dict ( Int, Int ) Char
+        oldDict =
+            charsToCellCharDict (String.toList oldStr)
 
-                ( _, [] ) ->
-                    -- new string is empty, add all cells from old
-                    acc ++ allTextCells row col accOld
+        newDict : Dict ( Int, Int ) Char
+        newDict =
+            charsToCellCharDict (String.toList newStr)
 
-                ( '\n' :: restOld, '\n' :: restNew ) ->
-                    step restOld restNew (row + 1) 0 acc
+        allKeys : Set ( Int, Int )
+        allKeys =
+            Set.union (Dict.keys oldDict |> Set.fromList) (Dict.keys newDict |> Set.fromList)
 
-                ( '\n' :: restOld, _ ) ->
-                    -- old line has ended, add all cells from current line in `new` then continue
-                    let
-                        res =
-                            textCellsUntilNewline row col accNew
-                    in
-                    step restOld res.rest res.row res.col (acc ++ res.cells)
-
-                ( _, '\n' :: restNew ) ->
-                    let
-                        res =
-                            textCellsUntilNewline row col accOld
-                    in
-                    step res.rest restNew res.row res.col (acc ++ res.cells)
-
-                ( a :: restOld, b :: restNew ) ->
-                    if a == b then
-                        step restOld restNew row (col + 1) acc
-
-                    else
-                        step restOld restNew row (col + 1) (( row, col ) :: acc)
+        cellChanged : ( Int, Int ) -> Bool
+        cellChanged key =
+            Dict.get key oldDict /= Dict.get key newDict
     in
-    step (String.toList oldStr) (String.toList newStr) 0 0 []
+    allKeys
+        |> Set.filter cellChanged
+        |> Set.toList
+        |> List.sort
 
 
 {-| Produces all text cells in a string.
 -}
-allTextCells : Int -> Int -> List Char -> List ( Int, Int )
+allTextCells : Int -> Int -> List Char -> List ( Int, Int, Char )
 allTextCells row col chars =
     let
         go acc lst r c =
@@ -283,8 +292,8 @@ allTextCells row col chars =
                 '\n' :: rest ->
                     go acc rest (r + 1) 0
 
-                _ :: rest ->
-                    go (( r, c ) :: acc) rest r (c + 1)
+                char :: rest ->
+                    go (( r, c, char ) :: acc) rest r (c + 1)
     in
     go [] chars row col
 
@@ -343,6 +352,27 @@ textCellToTile grid { x, y } font ( row, col ) =
     ( tileX, tileY )
 
 
+{-| Bounding box of the glyph at the given (row, col) in screen space.
+-}
+textCellToGlyphBbox : { text | x : Int, y : Int } -> Font -> ( Int, Int ) -> BoundingBox
+textCellToGlyphBbox { x, y } font ( row, col ) =
+    let
+        lineHeight =
+            font.glyphHeight + font.extraLineHeight
+
+        glyphX =
+            x + col * font.glyphWidth
+
+        glyphY =
+            y + row * lineHeight + font.extraLineHeight
+    in
+    { x = glyphX
+    , y = glyphY
+    , w = font.glyphWidth
+    , h = font.glyphHeight
+    }
+
+
 markBbox_TEST : TileGrid -> BoundingBox -> Set ( Int, Int )
 markBbox_TEST =
     markBbox
@@ -363,7 +393,7 @@ changedTextCells_TEST =
     changedTextCells
 
 
-allTextCells_TEST : Int -> Int -> List Char -> List ( Int, Int )
+allTextCells_TEST : Int -> Int -> List Char -> List ( Int, Int, Char )
 allTextCells_TEST =
     allTextCells
 
@@ -371,3 +401,8 @@ allTextCells_TEST =
 diffChildren_TEST : TileGrid -> List Font -> List Node -> List Node -> Set ( Int, Int )
 diffChildren_TEST =
     diffChildren
+
+
+textCellToGlyphBbox_TEST : { text | x : Int, y : Int } -> Font -> ( Int, Int ) -> BoundingBox
+textCellToGlyphBbox_TEST =
+    textCellToGlyphBbox

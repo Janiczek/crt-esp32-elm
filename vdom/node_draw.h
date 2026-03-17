@@ -104,7 +104,7 @@ void node_draw_tileText(Node* node, int tx0, int ty0) {
     int cx1 = cx0 + fonts[fi]->glyph_w - 1;
     int cy1 = draw_y0 + fonts[fi]->glyph_h - 1;
     if (!(cx1 < tx0 || cx0 > tx1 || cy1 < ty0 || draw_y0 > ty1)) {
-      drawChar(fi, cx0, cy0, *p, color);
+      drawCharInRect(fi, cx0, cy0, *p, color, tx0, ty0, tx1, ty1);
     }
     px += adv;
   }

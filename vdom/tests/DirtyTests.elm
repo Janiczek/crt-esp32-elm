@@ -4,6 +4,7 @@ import BoundingBox exposing (BoundingBox)
 import Color
 import Dirty
 import Expect
+import Font exposing (Font)
 import Fuzz exposing (Fuzzer)
 import Fuzzers
 import Node
@@ -135,7 +136,7 @@ suite =
                           , ( "abc\n...\n..."
                             , "Xabc\n...\n..."
                             )
-                          , [ ( 0, 2 ), ( 0, 1 ), ( 0, 0 ), ( 0, 3 ) ]
+                          , [ ( 0, 0 ), ( 0, 1 ), ( 0, 2 ), ( 0, 3 ) ]
                           )
                         , ( "addition in middle"
                           , ( "...\n...\n..."
@@ -147,7 +148,7 @@ suite =
                           , ( "...\nabc\n..."
                             , "...\naXbc\n..."
                             )
-                          , [ ( 1, 2 ), ( 1, 1 ), ( 1, 3 ) ]
+                          , [ ( 1, 1 ), ( 1, 2 ), ( 1, 3 ) ]
                           )
                         , ( "addition at end"
                           , ( "...\n...\n..."
@@ -159,13 +160,25 @@ suite =
                           , ( "...\n..."
                             , "...\n...\n..."
                             )
-                          , [ ( 2, 2 ), ( 2, 1 ), ( 2, 0 ) ]
+                          , [ ( 2, 0 ), ( 2, 1 ), ( 2, 2 ) ]
                           )
                         , ( "added line with newline"
                           , ( "...\n..."
                             , "...\n...\n..."
                             )
-                          , [ ( 2, 2 ), ( 2, 1 ), ( 2, 0 ) ]
+                          , [ ( 2, 0 ), ( 2, 1 ), ( 2, 2 ) ]
+                          )
+                        , ( "leading newline: AAA to \\nAAA marks both lines"
+                          , ( "AAA"
+                            , "\nAAA"
+                            )
+                          , [ ( 0, 0 ), ( 0, 1 ), ( 0, 2 ), ( 1, 0 ), ( 1, 1 ), ( 1, 2 ) ]
+                          )
+                        , ( "leading newline removed: \\nAAA to AAA marks both lines"
+                          , ( "\nAAA"
+                            , "AAA"
+                            )
+                          , [ ( 0, 0 ), ( 0, 1 ), ( 0, 2 ), ( 1, 0 ), ( 1, 1 ), ( 1, 2 ) ]
                           )
                         ]
 
@@ -223,7 +236,7 @@ suite =
                         List
                             ( String
                             , ( Int, Int, String )
-                            , List ( Int, Int )
+                            , List ( Int, Int, Char )
                             )
                     testCases =
                         [ ( "empty string"
@@ -232,18 +245,18 @@ suite =
                           )
                         , ( "simple"
                           , ( 0, 0, "abc\ndef" )
-                          , [ ( 1, 2 ), ( 1, 1 ), ( 1, 0 ), ( 0, 2 ), ( 0, 1 ), ( 0, 0 ) ]
+                          , [ ( 1, 2, 'f' ), ( 1, 1, 'e' ), ( 1, 0, 'd' ), ( 0, 2, 'c' ), ( 0, 1, 'b' ), ( 0, 0, 'a' ) ]
                           )
                         , ( "non-zero coords"
                           , ( 3, 2, "abc\ndef" )
-                          , [ ( 4, 2 ), ( 4, 1 ), ( 4, 0 ), ( 3, 4 ), ( 3, 3 ), ( 3, 2 ) ]
+                          , [ ( 4, 2, 'f' ), ( 4, 1, 'e' ), ( 4, 0, 'd' ), ( 3, 4, 'c' ), ( 3, 3, 'b' ), ( 3, 2, 'a' ) ]
                           )
                         ]
 
                     toTest :
                         ( String
                         , ( Int, Int, String )
-                        , List ( Int, Int )
+                        , List ( Int, Int, Char )
                         )
                         -> Test
                     toTest ( name, ( row, col, chars ), expected ) =
@@ -263,11 +276,12 @@ suite =
                     Dirty.allTextCells_TEST row col (String.toList charsWithPrefix)
                         |> List.sort
                         |> List.drop 3
+                        |> List.map (\( r, c, char ) -> ( r, c ))
                         |> Expect.equalLists
                             (Dirty.allTextCells_TEST row col (String.toList chars)
                                 |> List.sort
                                 |> List.map
-                                    (\( r, c ) ->
+                                    (\( r, c, _ ) ->
                                         if r == row then
                                             ( r + 1, c - col )
 
@@ -349,6 +363,159 @@ suite =
                                     |> Expect.equal expected
                 in
                 List.map toTest testCases
+            ]
+        , Test.describe "textCellToGlyphBbox"
+            [ Test.describe "unit tests" <|
+                let
+                    font8x8 : Font
+                    font8x8 =
+                        { name = "F8"
+                        , asciiFirst = 32
+                        , asciiLast = 126
+                        , numGlyphs = 95
+                        , glyphWidth = 8
+                        , glyphHeight = 8
+                        , extraLineHeight = 0
+                        , bits = []
+                        }
+
+                    font5x7extra1 : Font
+                    font5x7extra1 =
+                        { name = "F5"
+                        , asciiFirst = 32
+                        , asciiLast = 126
+                        , numGlyphs = 95
+                        , glyphWidth = 5
+                        , glyphHeight = 7
+                        , extraLineHeight = 1
+                        , bits = []
+                        }
+
+                    testCases :
+                        List
+                            { name : String
+                            , textOrigin : ( Int, Int )
+                            , font : Font
+                            , cell : ( Int, Int )
+                            , expected : BoundingBox
+                            }
+                    testCases =
+                        [ { name = "origin cell (0,0), font 8×8"
+                          , textOrigin = ( 0, 0 )
+                          , font = font8x8
+                          , cell = ( 0, 0 )
+                          , expected = { x = 0, y = 0, w = 8, h = 8 }
+                          }
+                        , { name = "text at (1,0), cell (0,0), font 8×8: glyph spans two tiles"
+                          , textOrigin = ( 1, 0 )
+                          , font = font8x8
+                          , cell = ( 0, 0 )
+                          , expected = { x = 1, y = 0, w = 8, h = 8 }
+                          }
+                        , { name = "text at (0,0), cell (1,0), font 8×8: second row first char"
+                          , textOrigin = ( 0, 0 )
+                          , font = font8x8
+                          , cell = ( 1, 0 )
+                          , expected = { x = 0, y = 8, w = 8, h = 8 }
+                          }
+                        , { name = "text at (0,0), cell (0,0), font 5×7 extraLineHeight 1"
+                          , textOrigin = ( 0, 0 )
+                          , font = font5x7extra1
+                          , cell = ( 0, 0 )
+                          , expected = { x = 0, y = 1, w = 5, h = 7 }
+                          }
+                        , { name = "text at (10,4), cell (2,3), font 8×8"
+                          , textOrigin = ( 10, 4 )
+                          , font = font8x8
+                          , cell = ( 2, 3 )
+                          , expected = { x = 34, y = 20, w = 8, h = 8 }
+                          }
+                        ]
+
+                    toTest c =
+                        Test.test c.name <|
+                            \_ ->
+                                Dirty.textCellToGlyphBbox_TEST
+                                    { x = Tuple.first c.textOrigin, y = Tuple.second c.textOrigin }
+                                    c.font
+                                    c.cell
+                                    |> Expect.equal c.expected
+                in
+                List.map toTest testCases
+            , Test.fuzz
+                (Fuzz.map5
+                    (\x y gw gh extra ->
+                        ( ( x, y )
+                        , { name = ""
+                          , asciiFirst = 32
+                          , asciiLast = 126
+                          , numGlyphs = 95
+                          , glyphWidth = gw
+                          , glyphHeight = gh
+                          , extraLineHeight = extra
+                          , bits = []
+                          }
+                        )
+                    )
+                    Fuzz.int
+                    Fuzz.int
+                    (Fuzz.intRange 1 16)
+                    (Fuzz.intRange 1 16)
+                    (Fuzz.intRange 0 4)
+                )
+                "glyph bbox always has w = font.glyphWidth and h = font.glyphHeight"
+              <|
+                \( textOrigin, font ) ->
+                    let
+                        row =
+                            0
+
+                        col =
+                            0
+
+                        bbox =
+                            Dirty.textCellToGlyphBbox_TEST
+                                { x = Tuple.first textOrigin, y = Tuple.second textOrigin }
+                                font
+                                ( row, col )
+                    in
+                    ( bbox.w, bbox.h )
+                        |> Expect.equal ( font.glyphWidth, font.glyphHeight )
+            , Test.fuzz
+                (Fuzz.intRange 4 16
+                    |> Fuzz.andThen
+                        (\tileSize ->
+                            Fuzz.intRange 1 (tileSize - 1)
+                                |> Fuzz.map (\textX -> ( tileSize, textX ))
+                        )
+                )
+                "single char spanning tile boundary: glyph bbox marks at least 2 tiles"
+              <|
+                \( tileSize, textX ) ->
+                    let
+                        grid =
+                            { tileSize = tileSize
+                            , tileCols = 50
+                            , tileRows = 50
+                            }
+
+                        font =
+                            { name = ""
+                            , asciiFirst = 32
+                            , asciiLast = 126
+                            , numGlyphs = 95
+                            , glyphWidth = tileSize
+                            , glyphHeight = tileSize
+                            , extraLineHeight = 0
+                            , bits = []
+                            }
+
+                        bbox =
+                            Dirty.textCellToGlyphBbox_TEST { x = textX, y = 0 } font ( 0, 0 )
+                    in
+                    Dirty.markBbox_TEST grid bbox
+                        |> Set.size
+                        |> Expect.atLeast 2
             ]
         , Test.describe "markBbox"
             [ Test.describe "overlap cases" <|
@@ -568,5 +735,111 @@ suite =
                 \node1 node2 ->
                     Dirty.diff basicGrid [] node1 node2
                         |> Expect.equal (Dirty.diff basicGrid [] node2 node1)
+            , Test.test "keyed sibling reorder: overlapping rects order swapped marks tiles" <|
+                \_ ->
+                    let
+                        grid =
+                            basicGrid
+
+                        bboxA =
+                            { x = 0, y = 0, w = 8, h = 8 }
+
+                        bboxB =
+                            { x = 4, y = 4, w = 8, h = 8 }
+
+                        rect key b =
+                            Node.rect key
+                                { x = b.x, y = b.y, w = b.w, h = b.h, color = Color.black }
+
+                        oldRoot =
+                            Node.group "g" [ rect "a" bboxA, rect "b" bboxB ]
+
+                        newRoot =
+                            Node.group "g" [ rect "b" bboxB, rect "a" bboxA ]
+
+                        expected =
+                            Dirty.markBbox_TEST grid bboxA
+                                |> Set.union (Dirty.markBbox_TEST grid bboxB)
+                    in
+                    Dirty.diff grid [] oldRoot newRoot
+                        |> Expect.equal expected
+            , Test.test "Rect color-only change: same bbox different color marks border tiles" <|
+                \_ ->
+                    let
+                        grid =
+                            basicGrid
+
+                        bbox =
+                            { x = 0, y = 0, w = 8, h = 8 }
+
+                        oldRoot =
+                            Node.rect "r"
+                                { x = bbox.x, y = bbox.y, w = bbox.w, h = bbox.h, color = Color.black }
+
+                        newRoot =
+                            Node.rect "r"
+                                { x = bbox.x, y = bbox.y, w = bbox.w, h = bbox.h, color = Color.white }
+
+                        expected =
+                            Dirty.markRectBorder_TEST grid bbox
+                    in
+                    Dirty.diff grid [] oldRoot newRoot
+                        |> Expect.equal expected
+            , Test.test "Text: changed glyph spanning two tiles marks both tiles" <|
+                \_ ->
+                    let
+                        grid =
+                            basicGrid
+
+                        font =
+                            { name = "Test"
+                            , asciiFirst = 32
+                            , asciiLast = 126
+                            , numGlyphs = 95
+                            , glyphWidth = 8
+                            , glyphHeight = 8
+                            , extraLineHeight = 0
+                            , bits = []
+                            }
+
+                        oldRoot =
+                            Node.text [ font ] "txt" { x = 1, y = 0, text = "a", fontIndex = 0, color = Color.white }
+
+                        newRoot =
+                            Node.text [ font ] "txt" { x = 1, y = 0, text = "b", fontIndex = 0, color = Color.white }
+
+                        glyphBbox =
+                            { x = 1, y = 0, w = 8, h = 8 }
+
+                        expected =
+                            Dirty.markBbox_TEST grid glyphBbox
+                    in
+                    Dirty.diff grid [ font ] oldRoot newRoot
+                        |> Expect.equal expected
+            , Test.test "Text: leading newline A to \\nA marks tile containing second line" <|
+                \_ ->
+                    let
+                        grid =
+                            basicGrid
+
+                        font =
+                            { name = "Test"
+                            , asciiFirst = 32
+                            , asciiLast = 126
+                            , numGlyphs = 95
+                            , glyphWidth = 8
+                            , glyphHeight = 7
+                            , extraLineHeight = 1
+                            , bits = []
+                            }
+
+                        oldRoot =
+                            Node.text [ font ] "txt" { x = 0, y = 0, text = "A", fontIndex = 0, color = Color.white }
+
+                        newRoot =
+                            Node.text [ font ] "txt" { x = 0, y = 0, text = "\nA", fontIndex = 0, color = Color.white }
+                    in
+                    Dirty.diff grid [ font ] oldRoot newRoot
+                        |> Expect.equalSets (Set.fromList [ ( 0, 0 ), ( 0, 1 ) ])
             ]
         ]
