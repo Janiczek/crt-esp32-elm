@@ -38,13 +38,6 @@ static inline bool font_hasChar(int font_index, char c) {
   return u >= font->ascii_first && u <= font->ascii_last;
 }
 
-static inline int font_textWidth(const char* s, int font_index) {
-  const FontMono1B* font = fonts[font_index];
-  int n = 0;
-  while (s[n]) n++;
-  return n * font->glyph_w;
-}
-
 static inline void font_textMultilineSize(const char* s, int font_index, int* out_w, int* out_h) {
   const FontMono1B* font = fonts[font_index];
   int max_w = 0;
