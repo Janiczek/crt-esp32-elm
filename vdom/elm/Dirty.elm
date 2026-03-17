@@ -1,14 +1,14 @@
 module Dirty exposing
     ( TileGrid
     , diff, dirtyTilesEncoder
-    , markBbox_TEST, textCellsUntilNewline_TEST, changedTextCells_TEST, allTextCells_TEST
+    , markBbox_TEST, markRectBorder_TEST, textCellsUntilNewline_TEST, changedTextCells_TEST, allTextCells_TEST
     )
 
 {-|
 
 @docs TileGrid
 @docs diff, dirtyTilesEncoder
-@docs markBbox_TEST, textCellsUntilNewline_TEST, changedTextCells_TEST, allTextCells_TEST
+@docs markBbox_TEST, markRectBorder_TEST, textCellsUntilNewline_TEST, changedTextCells_TEST, allTextCells_TEST
 
 -}
 
@@ -67,8 +67,10 @@ diff grid fonts oldRoot newRoot =
                 else
                     Set.union (markBbox grid oldRoot.bbox) (markBbox grid newRoot.bbox)
 
+            ( Rect _, Rect _ ) ->
+                Set.union (markRectBorder grid oldRoot.bbox) (markRectBorder grid newRoot.bbox)
+
             _ ->
-                -- TODO PERF: Rect could only mark the borders
                 Set.union (markBbox grid oldRoot.bbox) (markBbox grid newRoot.bbox)
 
 
@@ -184,6 +186,30 @@ markBbox grid bbox =
             (List.range (clampTx tx0) (clampTx tx1))
             (List.range (clampTy ty0) (clampTy ty1))
             |> Set.fromList
+
+
+markRectBorder : TileGrid -> BoundingBox -> Set ( Int, Int )
+markRectBorder grid bbox =
+    if bbox.w <= 0 || bbox.h <= 0 then
+        Set.empty
+
+    else
+        let
+            top =
+                { bbox | h = 1 }
+
+            bottom =
+                { bbox | y = bbox.y + bbox.h - 1, h = 1 }
+
+            left =
+                { bbox | w = 1 }
+
+            right =
+                { bbox | x = bbox.x + bbox.w - 1, w = 1 }
+        in
+        [ top, bottom, left, right ]
+            |> List.map (markBbox grid)
+            |> List.foldl Set.union Set.empty
 
 
 {-| Finds character cells (not tiles!) that differ between old and new text.
@@ -310,6 +336,11 @@ textCellToTile grid { x, y } font ( row, col ) =
 markBbox_TEST : TileGrid -> BoundingBox -> Set ( Int, Int )
 markBbox_TEST =
     markBbox
+
+
+markRectBorder_TEST : TileGrid -> BoundingBox -> Set ( Int, Int )
+markRectBorder_TEST =
+    markRectBorder
 
 
 textCellsUntilNewline_TEST : Int -> Int -> List Char -> { cells : List ( Int, Int ), rest : List Char, row : Int, col : Int }

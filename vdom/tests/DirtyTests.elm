@@ -342,4 +342,36 @@ suite =
                 in
                 List.map toTest cases
             ]
+        , Test.describe "markRectBorder"
+            [ Test.describe "border-only (excludes interior tiles)" <|
+                let
+                    grid =
+                        { tileSize = 8
+                        , tileCols = 4
+                        , tileRows = 4
+                        }
+
+                    cases =
+                        [ { name = "single-tile: bbox fully inside one tile"
+                          , bbox = { x = 2, y = 2, w = 4, h = 4 }
+                          , expected = [ ( 0, 0 ) ]
+                          }
+                        , { name = "2×2 tiles: all four tiles are on border"
+                          , bbox = { x = 4, y = 4, w = 8, h = 8 }
+                          , expected = [ ( 0, 0 ), ( 1, 0 ), ( 0, 1 ), ( 1, 1 ) ]
+                          }
+                        , { name = "3×3 tiles ring: center tile not included"
+                          , bbox = { x = 2, y = 2, w = 16, h = 16 }
+                          , expected = [ ( 0, 0 ), ( 1, 0 ), ( 2, 0 ), ( 0, 1 ), ( 2, 1 ), ( 0, 2 ), ( 1, 2 ), ( 2, 2 ) ]
+                          }
+                        ]
+
+                    toTest c =
+                        Test.test c.name <|
+                            \() ->
+                                Dirty.markRectBorder_TEST grid c.bbox
+                                    |> Expect.equal (Set.fromList c.expected)
+                in
+                List.map toTest cases
+            ]
         ]

@@ -2,12 +2,12 @@ module Command exposing (Command(..), encoder, needsAck)
 
 import Bytes.Encode
 import Dirty exposing (dirtyTilesEncoder)
-import Set exposing (Set)
 import Node exposing (Node)
+import Set exposing (Set)
 
 
 type Command
-    = SetRootNode Node (Set (Int,Int))
+    = SetRootNode Node (Set ( Int, Int ))
 
 
 commandTag : Command -> Int
