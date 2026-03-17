@@ -14,6 +14,7 @@
             "elm/file": "1.0.5",
             "elm/html": "1.0.1",
             "elm/svg": "1.0.1",
+            "elm-community/html-extra": "3.4.0",
             "elmcraft/core-extra": "2.3.0",
             "lamdera/codecs": "1.0.0",
             "lamdera/core": "1.0.0"

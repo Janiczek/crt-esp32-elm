@@ -29,6 +29,10 @@ encoder command =
     [ [ Bytes.Encode.unsignedInt8 (commandTag command) ]
     , case command of
         SetRootNode node dirtyTiles ->
+            let
+                _ =
+                    Debug.log "dirtyTiles" (Set.size dirtyTiles)
+            in
             [ Node.encoder node
             , Dirty.dirtyTilesEncoder dirtyTiles
             ]

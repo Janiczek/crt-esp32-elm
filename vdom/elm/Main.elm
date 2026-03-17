@@ -27,6 +27,7 @@ import ESP32 exposing (ESP32, VideoConstants, videoConstants)
 import Font exposing (Font)
 import Html exposing (Html)
 import Html.Attributes
+import Html.Attributes.Extra
 import Html.Events
 import List.Cartesian
 import Node exposing (Node)
@@ -53,6 +54,7 @@ type alias ModelConnected =
     , videoConstants : VideoConstants
     , lastError : String
     , textarea : String
+    , fontIndex : Int
     , rootNode : Node
     }
 
@@ -68,6 +70,7 @@ type Msg
 
 type MsgConnected
     = SetTextarea String
+    | SetFontIndex Int
 
 
 port connect : () -> Cmd msg
@@ -105,16 +108,6 @@ init () =
     )
 
 
-terminalW : Int
-terminalW =
-    67
-
-
-terminalH : Int
-terminalH =
-    27
-
-
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
@@ -127,18 +120,24 @@ update msg model =
                     videoConstants esp32
 
                 textarea =
-                    String.repeat terminalW "#"
-                        |> List.repeat terminalH
-                        |> String.join "\n"
+                    "Ready..."
+
+                fontIndex_ =
+                    if List.length esp32.fonts > 1 then
+                        1
+
+                    else
+                        0
 
                 node =
-                    textScene esp32 videoConstants_ textarea
+                    textScene esp32 videoConstants_ textarea fontIndex_
             in
             ( Connected
                 { esp32 = esp32
                 , videoConstants = videoConstants_
                 , lastError = ""
                 , textarea = textarea
+                , fontIndex = fontIndex_
                 , rootNode = node
                 }
             , setRootNode esp32 videoConstants_ Node.empty node
@@ -182,32 +181,51 @@ updateConnected msgConnected modelConnected =
         SetTextarea text ->
             let
                 node =
-                    textScene modelConnected.esp32 modelConnected.videoConstants text
+                    textScene modelConnected.esp32 modelConnected.videoConstants text modelConnected.fontIndex
             in
             ( { modelConnected | textarea = text, rootNode = node }
+            , setRootNode modelConnected.esp32 modelConnected.videoConstants modelConnected.rootNode node
+            )
+
+        SetFontIndex idx ->
+            let
+                maxIdx =
+                    List.length modelConnected.esp32.fonts - 1
+
+                fontIndex_ =
+                    clamp 0 maxIdx idx
+
+                node =
+                    textScene modelConnected.esp32 modelConnected.videoConstants modelConnected.textarea fontIndex_
+            in
+            ( { modelConnected | fontIndex = fontIndex_, rootNode = node }
             , setRootNode modelConnected.esp32 modelConnected.videoConstants modelConnected.rootNode node
             )
 
 
 setRootNode : ESP32 -> VideoConstants -> Node -> Node -> Cmd MsgConnected
 setRootNode esp32 videoConstants previousNode node =
-    let
-        command =
-            Command.SetRootNode node
-                (Dirty.diff
-                    { tileSize = esp32.tileSize
-                    , tileCols = videoConstants.tileCols
-                    , tileRows = videoConstants.tileRows
-                    }
-                    esp32.fonts
-                    previousNode
-                    node
-                )
+    if node.hash == previousNode.hash then
+        Cmd.none
 
-        bytes =
-            Command.encoder command |> Bytes.Encode.encode
-    in
-    sendCommand ( bytes, Command.needsAck command )
+    else
+        let
+            command =
+                Command.SetRootNode node
+                    (Dirty.diff
+                        { tileSize = esp32.tileSize
+                        , tileCols = videoConstants.tileCols
+                        , tileRows = videoConstants.tileRows
+                        }
+                        esp32.fonts
+                        previousNode
+                        node
+                    )
+
+            bytes =
+                Command.encoder command |> Bytes.Encode.encode
+        in
+        sendCommand ( bytes, Command.needsAck command )
 
 
 view : Model -> Document Msg
@@ -238,6 +256,31 @@ viewNotConnected model =
         ]
 
 
+viewFontSelect : ModelConnected -> Html Msg
+viewFontSelect model =
+    Html.div [ Html.Attributes.style "margin-top" "0.5rem" ]
+        [ Html.label
+            [ Html.Attributes.style "margin-right" "0.5rem" ]
+            [ Html.text "Font" ]
+        , Html.select
+            [ Html.Events.onInput
+                (\s ->
+                    MsgConnected (SetFontIndex (Maybe.withDefault 0 (String.toInt s)))
+                )
+            ]
+            (model.esp32.fonts
+                |> List.indexedMap
+                    (\i font ->
+                        Html.option
+                            [ Html.Attributes.value (String.fromInt i)
+                            , Html.Attributes.Extra.attributeIf (i == model.fontIndex) (Html.Attributes.attribute "selected" "")
+                            ]
+                            [ Html.text (String.fromInt i ++ ": " ++ font.name) ]
+                    )
+            )
+        ]
+
+
 viewConnected : ModelConnected -> Html Msg
 viewConnected model =
     Html.div []
@@ -247,11 +290,12 @@ viewConnected model =
             [ Html.Events.onClick DisconnectRequested ]
             [ Html.text "Disconnect" ]
         , Html.textarea
-            [ Html.Attributes.cols terminalW
-            , Html.Attributes.rows terminalH
+            [ Html.Attributes.cols 80
+            , Html.Attributes.rows 25
             , Html.Events.onInput (MsgConnected << SetTextarea)
             ]
             [ Html.text model.textarea ]
+        , viewFontSelect model
         , viewDeviceInfo model.esp32 model.videoConstants
         ]
 
@@ -536,39 +580,39 @@ onConnectSuccessful_ onSuccess onFail =
         )
 
 
-textScene : ESP32 -> VideoConstants -> String -> Node
-textScene esp32 c text =
+textScene : ESP32 -> VideoConstants -> String -> Int -> Node
+textScene esp32 c text fontIndex_ =
     Node.group "main"
         [ Node.text esp32.fonts
             "text-scene"
             { x = c.xMin + 4
             , y = c.yMin + 2
             , text = text
-            , fontIndex = 1
+            , fontIndex = fontIndex_
             , color = Color.white
             }
         , Node.rectFill "cross bg"
-            { x = c.xMin + c.usableWidth - 8
-            , y = c.yMin + c.usableHeight - 8
-            , w = 7
-            , h = 7
-            , color = Color.gray
+            { x = c.xMax - 30
+            , y = c.yMax - 30
+            , w = 25
+            , h = 25
+            , color = Color.white
             }
         , Node.xLine "cross horiz"
-            { x = c.xMin + c.usableWidth - 6
-            , y = c.yMin + c.usableHeight - 4
-            , len = 5
-            , color = Color.black
+            { x = c.xMax - 29
+            , y = c.yMax - 18
+            , len = 23
+            , color = Color.gray
             }
         , Node.yLine "cross vert"
-            { x = c.xMin + c.usableWidth - 4
-            , y = c.yMin + c.usableHeight - 6
-            , len = 5
-            , color = Color.black
+            { x = c.xMax - 18
+            , y = c.yMax - 29
+            , len = 23
+            , color = Color.gray
             }
         , Node.rect "border shadow"
             { x = c.xMin - 1
-            , y = c.yMin + 1
+            , y = c.yMin - 1
             , w = c.usableWidth + 2
             , h = c.usableHeight + 2
             , color = Color.gray
