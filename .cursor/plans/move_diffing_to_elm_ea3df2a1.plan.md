@@ -16,10 +16,10 @@ todos:
     status: completed
   - id: command-elm
     content: "Update Command.elm: SetRootNode takes Node + DirtyTiles, encoder appends dirty tile list after node bytes"
-    status: pending
+    status: completed
   - id: main-elm
     content: "Update Main.elm: store rootNode in model (init to nodeEmpty \"\"), diff old vs new on scene change, pass dirty tiles to SetRootNode"
-    status: pending
+    status: completed
   - id: c-strip-diff
     content: "Strip diffing from vdom.ino: remove diffNode/diffChildren/markDirtyTiles/onNewRootNode; rename rootNodeNew to rootNode"
     status: pending

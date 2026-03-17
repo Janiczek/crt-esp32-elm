@@ -131,17 +131,17 @@ update msg model =
                         |> List.repeat terminalH
                         |> String.join "\n"
 
-                rootNode =
-                    Node.empty
+                node =
+                    textScene esp32 videoConstants_ textarea
             in
             ( Connected
                 { esp32 = esp32
                 , videoConstants = videoConstants_
                 , lastError = ""
                 , textarea = textarea
-                , rootNode = rootNode
+                , rootNode = node
                 }
-            , sendTextareaScene rootNode esp32 videoConstants_ textarea
+            , setRootNode esp32 videoConstants_ Node.empty node
                 |> Cmd.map MsgConnected
             )
 
@@ -180,16 +180,13 @@ updateConnected : MsgConnected -> ModelConnected -> ( ModelConnected, Cmd MsgCon
 updateConnected msgConnected modelConnected =
     case msgConnected of
         SetTextarea text ->
-            ( modelConnected
-            , sendTextareaScene modelConnected.rootNode modelConnected.esp32 modelConnected.videoConstants text
+            let
+                node =
+                    textScene modelConnected.esp32 modelConnected.videoConstants text
+            in
+            ( { modelConnected | textarea = text, rootNode = node }
+            , setRootNode modelConnected.esp32 modelConnected.videoConstants modelConnected.rootNode node
             )
-
-
-sendTextareaScene : Node -> ESP32 -> VideoConstants -> String -> Cmd MsgConnected
-sendTextareaScene rootNode esp32 videoConstants text =
-    text
-        |> textScene esp32 videoConstants
-        |> setRootNode esp32 videoConstants rootNode
 
 
 setRootNode : ESP32 -> VideoConstants -> Node -> Node -> Cmd MsgConnected
