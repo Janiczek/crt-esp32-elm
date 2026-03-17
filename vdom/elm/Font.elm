@@ -11,8 +11,8 @@ type alias Font =
     , asciiFirst : Int
     , asciiLast : Int
     , numGlyphs : Int
-    , glyphW : Int
-    , glyphH : Int
+    , glyphWidth : Int
+    , glyphHeight : Int
     , extraLineHeight : Int
     , bits : List Int  -- 0..255 (uint8s), glyph bitmaps
     }

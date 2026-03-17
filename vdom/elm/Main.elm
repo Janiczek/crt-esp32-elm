@@ -1,4 +1,4 @@
-port module Main exposing (main)
+port module Main exposing (Flags, Model, Msg, main)
 
 {-| A web app to connect to and control an ESP32 via Web Serial.
 
@@ -20,8 +20,6 @@ import Browser exposing (Document)
 import Bytes exposing (Bytes)
 import Bytes.Decode
 import Bytes.Encode
-import Bytes.Extra
-import Char
 import Color
 import Command
 import ESP32 exposing (ESP32, VideoConstants, videoConstants)
@@ -29,8 +27,9 @@ import Font exposing (Font)
 import Html exposing (Html)
 import Html.Attributes
 import Html.Events
+import List.Cartesian
 import Node exposing (Node)
-import Svg
+import Svg exposing (Svg)
 import Svg.Attributes
 
 
@@ -136,7 +135,7 @@ update msg model =
                 , lastError = ""
                 , textarea = textarea
                 }
-            , setRootNode (textScene videoConstants_ textarea)
+            , setRootNode (textScene esp32 videoConstants_ textarea)
                 |> Cmd.map MsgConnected
             )
 
@@ -177,7 +176,7 @@ updateConnected msgConnected modelConnected =
         SetTextarea text ->
             ( modelConnected
             , text
-                |> textScene modelConnected.videoConstants
+                |> textScene modelConnected.esp32 modelConnected.videoConstants
                 |> setRootNode
             )
 
@@ -224,54 +223,68 @@ viewNotConnected model =
 
 viewConnected : ModelConnected -> Html Msg
 viewConnected model =
-    Html.div [] <|
-        List.concat
-            [ [ Html.div [] [ Html.text "Connected." ]
-              , viewLastError model.lastError
-              , Html.button
-                    [ Html.Events.onClick DisconnectRequested ]
-                    [ Html.text "Disconnect" ]
-              , Html.textarea
-                    [ Html.Attributes.cols terminalW
-                    , Html.Attributes.rows terminalH
-                    , Html.Events.onInput (MsgConnected << SetTextarea)
-                    ]
-                    [ Html.text model.textarea ]
-              , viewDeviceInfo model.esp32 model.videoConstants
-              ]
+    Html.div []
+        [ Html.div [] [ Html.text "Connected." ]
+        , viewLastError model.lastError
+        , Html.button
+            [ Html.Events.onClick DisconnectRequested ]
+            [ Html.text "Disconnect" ]
+        , Html.textarea
+            [ Html.Attributes.cols terminalW
+            , Html.Attributes.rows terminalH
+            , Html.Events.onInput (MsgConnected << SetTextarea)
             ]
+            [ Html.text model.textarea ]
+        , viewDeviceInfo model.esp32 model.videoConstants
+        ]
 
 
 viewDeviceInfo : ESP32 -> VideoConstants -> Html msg
 viewDeviceInfo esp32 vc =
     let
+        tableStyle : List (Html.Attribute msg)
         tableStyle =
             [ Html.Attributes.style "font-family" "ui-monospace, monospace"
             , Html.Attributes.style "font-size" "0.875rem"
             , Html.Attributes.style "border-collapse" "collapse"
             ]
 
+        thStyle : List (Html.Attribute msg)
         thStyle =
             [ Html.Attributes.style "text-align" "left"
             , Html.Attributes.style "padding" "0.25rem 0.5rem 0.25rem 0"
             , Html.Attributes.style "color" "#666"
             ]
 
+        tdStyle : List (Html.Attribute msg)
         tdStyle =
             [ Html.Attributes.style "padding" "0.25rem 0.5rem" ]
 
+        tableRow : String -> Int -> Html msg
         tableRow name value =
             Html.tr []
-                [ Html.th (thStyle ++ [ Html.Attributes.style "font-weight" "500" ]) [ Html.text name ]
+                [ Html.th
+                    (thStyle
+                        ++ [ Html.Attributes.style "font-weight" "500" ]
+                    )
+                    [ Html.text name ]
                 , Html.td tdStyle [ Html.text (String.fromInt value) ]
                 ]
 
+        esp32Table : Html msg
         esp32Table =
-            Html.table (Html.Attributes.style "margin-top" "0.5rem" :: tableStyle)
+            Html.table
+                (Html.Attributes.style "margin-top" "0.5rem"
+                    :: tableStyle
+                )
                 [ Html.thead []
                     [ Html.tr []
-                        [ Html.th (thStyle ++ [ Html.Attributes.style "font-weight" "600" ]) [ Html.text "ESP32" ]
-                        , Html.th tdStyle [ Html.text "" ]
+                        [ Html.th
+                            (thStyle
+                                ++ [ Html.Attributes.style "font-weight" "600" ]
+                            )
+                            [ Html.text "ESP32" ]
+                        , Html.th tdStyle []
                         ]
                     ]
                 , Html.tbody []
@@ -284,18 +297,31 @@ viewDeviceInfo esp32 vc =
                     , tableRow "maxTotalNodes" esp32.maxTotalNodes
                     , tableRow "nodeGroupMaxChildren" esp32.nodeGroupMaxChildren
                     , Html.tr []
-                        [ Html.th (thStyle ++ [ Html.Attributes.style "font-weight" "500" ]) [ Html.text "fonts" ]
-                        , Html.td tdStyle [ Html.text (String.fromInt (List.length esp32.fonts)) ]
+                        [ Html.th
+                            (thStyle
+                                ++ [ Html.Attributes.style "font-weight" "500" ]
+                            )
+                            [ Html.text "fonts" ]
+                        , Html.td tdStyle
+                            [ Html.text (String.fromInt (List.length esp32.fonts)) ]
                         ]
                     ]
                 ]
 
+        vcTable : Html msg
         vcTable =
-            Html.table (Html.Attributes.style "margin-top" "0.75rem" :: tableStyle)
+            Html.table
+                (Html.Attributes.style "margin-top" "0.75rem"
+                    :: tableStyle
+                )
                 [ Html.thead []
                     [ Html.tr []
-                        [ Html.th (thStyle ++ [ Html.Attributes.style "font-weight" "600" ]) [ Html.text "Video constants" ]
-                        , Html.th tdStyle [ Html.text "" ]
+                        [ Html.th
+                            (thStyle
+                                ++ [ Html.Attributes.style "font-weight" "600" ]
+                            )
+                            [ Html.text "Video constants" ]
+                        , Html.th tdStyle []
                         ]
                     ]
                 , Html.tbody []
@@ -303,13 +329,14 @@ viewDeviceInfo esp32 vc =
                     , tableRow "xMax" vc.xMax
                     , tableRow "yMin" vc.yMin
                     , tableRow "yMax" vc.yMax
-                    , tableRow "usableW" vc.usableW
-                    , tableRow "usableH" vc.usableH
+                    , tableRow "usableWidth" vc.usableWidth
+                    , tableRow "usableHeight" vc.usableHeight
                     , tableRow "xCenter" vc.xCenter
                     , tableRow "yCenter" vc.yCenter
                     ]
                 ]
 
+        fontsSection : Html msg
         fontsSection =
             Html.div [ Html.Attributes.style "margin-top" "1rem" ]
                 [ Html.div
@@ -330,7 +357,7 @@ viewDeviceInfo esp32 vc =
                             ]
                         ]
                     , Html.tbody []
-                        (List.map (viewFontRow thStyle tdStyle) esp32.fonts)
+                        (List.map (viewFontRow tdStyle) esp32.fonts)
                     ]
                 ]
     in
@@ -345,17 +372,26 @@ viewDeviceInfo esp32 vc =
 
 viewFontRow :
     List (Html.Attribute msg)
-    -> List (Html.Attribute msg)
     -> Font
     -> Html msg
-viewFontRow thStyle tdStyle font =
+viewFontRow tdStyle font =
     Html.tr []
         [ Html.td tdStyle [ Html.text font.name ]
         , Html.td tdStyle
-            [ Html.text (String.fromInt font.asciiFirst ++ "–" ++ String.fromInt font.asciiLast) ]
+            [ Html.text
+                (String.fromInt font.asciiFirst
+                    ++ "–"
+                    ++ String.fromInt font.asciiLast
+                )
+            ]
         , Html.td tdStyle [ Html.text (String.fromInt font.numGlyphs) ]
         , Html.td tdStyle
-            [ Html.text (String.fromInt font.glyphW ++ "×" ++ String.fromInt font.glyphH) ]
+            [ Html.text
+                (String.fromInt font.glyphWidth
+                    ++ "×"
+                    ++ String.fromInt font.glyphHeight
+                )
+            ]
         , Html.td tdStyle [ Html.text (String.fromInt font.extraLineHeight) ]
         , Html.td tdStyle [ viewFontBitmap font ]
         ]
@@ -364,67 +400,83 @@ viewFontRow thStyle tdStyle font =
 viewFontBitmap : Font -> Html msg
 viewFontBitmap font =
     let
+        scale : Int
         scale =
             3
 
+        glyphsPerRow : Int
         glyphsPerRow =
             16
 
+        rows : Int
         rows =
             (font.numGlyphs + glyphsPerRow - 1) // glyphsPerRow
 
-        totalW =
-            glyphsPerRow * font.glyphW * scale
+        totalWidth : Int
+        totalWidth =
+            glyphsPerRow * font.glyphWidth * scale
 
-        totalH =
-            rows * font.glyphH * scale
+        totalHeight : Int
+        totalHeight =
+            rows * font.glyphHeight * scale
 
+        glyphPixel : Int -> Int -> Int -> Bool
         glyphPixel g row col =
             let
+                byteIdx : Int
                 byteIdx =
-                    g * font.glyphH + row
+                    g * font.glyphHeight + row
 
+                byte : Int
                 byte =
-                    List.drop byteIdx font.bits |> List.head |> Maybe.withDefault 0
+                    font.bits
+                        |> List.drop byteIdx
+                        |> List.head
+                        |> Maybe.withDefault 0
 
+                bit : Int
                 bit =
                     Bitwise.and (Bitwise.shiftRightBy (7 - col) byte) 1
             in
             bit == 1
 
+        rects : List (Svg msg)
         rects =
-            List.concatMap
-                (\g ->
-                    List.concatMap
-                        (\r ->
-                            List.filterMap
-                                (\c ->
-                                    if glyphPixel g r c then
-                                        Just
-                                            (Svg.rect
-                                                [ Svg.Attributes.x (String.fromInt (scale * (modBy glyphsPerRow g * font.glyphW + c)))
-                                                , Svg.Attributes.y (String.fromInt (scale * (g // glyphsPerRow * font.glyphH + r)))
-                                                , Svg.Attributes.width (String.fromInt scale)
-                                                , Svg.Attributes.height (String.fromInt scale)
-                                                , Svg.Attributes.fill "currentColor"
-                                                ]
-                                                []
-                                            )
+            List.Cartesian.map3
+                (\g r c ->
+                    if glyphPixel g r c then
+                        Just
+                            (Svg.rect
+                                [ Svg.Attributes.x (String.fromInt (scale * (modBy glyphsPerRow g * font.glyphWidth + c)))
+                                , Svg.Attributes.y (String.fromInt (scale * (g // glyphsPerRow * font.glyphHeight + r)))
+                                , Svg.Attributes.width (String.fromInt scale)
+                                , Svg.Attributes.height (String.fromInt scale)
+                                , Svg.Attributes.fill "currentColor"
+                                ]
+                                []
+                            )
 
-                                    else
-                                        Nothing
-                                )
-                                (List.range 0 (font.glyphW - 1))
-                        )
-                        (List.range 0 (font.glyphH - 1))
+                    else
+                        Nothing
                 )
                 (List.range 0 (font.numGlyphs - 1))
+                (List.range 0 (font.glyphHeight - 1))
+                (List.range 0 (font.glyphWidth - 1))
+                |> List.filterMap identity
     in
-    Html.div [ Html.Attributes.style "display" "inline-block", Html.Attributes.style "line-height" "0" ]
+    Html.div
+        [ Html.Attributes.style "display" "inline-block"
+        , Html.Attributes.style "line-height" "0"
+        ]
         [ Svg.svg
-            [ Svg.Attributes.width (String.fromInt totalW)
-            , Svg.Attributes.height (String.fromInt totalH)
-            , Svg.Attributes.viewBox ("0 0 " ++ String.fromInt totalW ++ " " ++ String.fromInt totalH)
+            [ Svg.Attributes.width (String.fromInt totalWidth)
+            , Svg.Attributes.height (String.fromInt totalHeight)
+            , Svg.Attributes.viewBox
+                ("0 0 "
+                    ++ String.fromInt totalWidth
+                    ++ " "
+                    ++ String.fromInt totalHeight
+                )
             ]
             rects
         ]
@@ -467,13 +519,48 @@ onConnectSuccessful_ onSuccess onFail =
         )
 
 
-textScene : VideoConstants -> String -> Node
-textScene c text =
-    Node 0 <|
-        Node.Text
+textScene : ESP32 -> VideoConstants -> String -> Node
+textScene esp32 c text =
+    Node.group "main"
+        [ Node.text esp32.fonts
+            "text-scene"
             { x = c.xMin + 4
             , y = c.yMin + 2
             , text = text
             , fontIndex = 1
             , color = Color.white
             }
+        , Node.rectFill "cross bg"
+            { x = c.xMin + c.usableWidth - 8
+            , y = c.yMin + c.usableHeight - 8
+            , w = 7
+            , h = 7
+            , color = Color.gray
+            }
+        , Node.xLine "cross horiz"
+            { x = c.xMin + c.usableWidth - 6
+            , y = c.yMin + c.usableHeight - 4
+            , len = 5
+            , color = Color.black
+            }
+        , Node.yLine "cross vert"
+            { x = c.xMin + c.usableWidth - 4
+            , y = c.yMin + c.usableHeight - 6
+            , len = 5
+            , color = Color.black
+            }
+        , Node.rect "border shadow"
+            { x = c.xMin - 1
+            , y = c.yMin + 1
+            , w = c.usableWidth + 2
+            , h = c.usableHeight + 2
+            , color = Color.gray
+            }
+        , Node.rect "border"
+            { x = c.xMin
+            , y = c.yMin
+            , w = c.usableWidth
+            , h = c.usableHeight
+            , color = Color.white
+            }
+        ]

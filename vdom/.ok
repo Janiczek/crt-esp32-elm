@@ -5,3 +5,5 @@ elf: cp /Users/martin/Library/Caches/arduino/sketches/B1E55301CCC7817D86488EEF6F
 monitor: arduino-cli monitor -p /dev/tty.usbserial-0001 -c 115200
 lamdera: lamdera make elm/Main.elm --output elm.js
 open: open index.html
+test: elm-test --compiler=lamdera
+watch: elm-test --compiler=lamdera --watch

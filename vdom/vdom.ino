@@ -73,7 +73,7 @@ void handleSerial() {
     switch (cmd) {
       case CMD_GET_ESP32_DATA: {
         // Compute the length of the following data to send as an uint16LE
-        uint16_t payload_length = 14;
+        uint16_t payload_length = 15;
         for (int i = 0; i < NUM_FONTS; i++) {
           const FontMono1B* font = fonts[i];
           // name as sized string: 1 byte length + strlen(name)
@@ -96,6 +96,7 @@ void handleSerial() {
         write_u8(MY_CRT_PADDING_B);
         write_u16_le((uint16_t)MAX_TOTAL_NODES);
         write_u16_le((uint16_t)NODE_GROUP_MAX_CHILDREN);
+        write_u8((uint8_t)TILE_SIZE);
         write_u16_le(NUM_FONTS);
         for (int i = 0; i < NUM_FONTS; i++) {
           const FontMono1B* font = fonts[i];

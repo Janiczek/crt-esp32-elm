@@ -6,8 +6,8 @@ module ESP32 exposing (ESP32, VideoConstants, decoder, videoConstants)
 import Bytes exposing (Endianness(..))
 import Bytes.Decode exposing (Decoder)
 import Bytes.Decode.Extra
-import Font exposing (Font)
 import BytesExtraExtra
+import Font exposing (Font)
 
 
 type alias ESP32 =
@@ -19,6 +19,7 @@ type alias ESP32 =
     , crtPaddingBottom : Int
     , maxTotalNodes : Int
     , nodeGroupMaxChildren : Int
+    , tileSize : Int
     , fonts : List Font
     }
 
@@ -28,10 +29,12 @@ type alias VideoConstants =
     , xMax : Int
     , yMin : Int
     , yMax : Int
-    , usableW : Int
-    , usableH : Int
+    , usableWidth : Int
+    , usableHeight : Int
     , xCenter : Int
     , yCenter : Int
+    , tileCols : Int
+    , tileRows : Int
     }
 
 
@@ -52,26 +55,34 @@ videoConstants esp32 =
         yMax =
             esp32.videoHeight - esp32.crtPaddingBottom
 
-        usableW =
+        usableWidth =
             xMax - xMin + 1
 
-        usableH =
+        usableHeight =
             yMax - yMin + 1
 
         xCenter =
-            (usableW // 2) + xMin
+            (usableWidth // 2) + xMin
 
         yCenter =
-            (usableH // 2) + yMin
+            (usableHeight // 2) + yMin
+
+        tileCols =
+            esp32.videoWidth // esp32.tileSize
+
+        tileRows =
+            esp32.videoHeight // esp32.tileSize
     in
     { xMin = xMin
     , xMax = xMax
     , yMin = yMin
     , yMax = yMax
-    , usableW = usableW
-    , usableH = usableH
+    , usableWidth = usableWidth
+    , usableHeight = usableHeight
     , xCenter = xCenter
     , yCenter = yCenter
+    , tileCols = tileCols
+    , tileRows = tileRows
     }
 
 
@@ -84,12 +95,14 @@ decoder =
         |> Bytes.Decode.Extra.andMap (Bytes.Decode.unsignedInt16 LE)
         |> Bytes.Decode.Extra.andMap (Bytes.Decode.unsignedInt16 LE)
         -- CRT paddings
-        |> Bytes.Decode.Extra.andMap (Bytes.Decode.unsignedInt8)
-        |> Bytes.Decode.Extra.andMap (Bytes.Decode.unsignedInt8)
-        |> Bytes.Decode.Extra.andMap (Bytes.Decode.unsignedInt8)
-        |> Bytes.Decode.Extra.andMap (Bytes.Decode.unsignedInt8)
+        |> Bytes.Decode.Extra.andMap Bytes.Decode.unsignedInt8
+        |> Bytes.Decode.Extra.andMap Bytes.Decode.unsignedInt8
+        |> Bytes.Decode.Extra.andMap Bytes.Decode.unsignedInt8
+        |> Bytes.Decode.Extra.andMap Bytes.Decode.unsignedInt8
         -- Limits
         |> Bytes.Decode.Extra.andMap (Bytes.Decode.unsignedInt16 LE)
         |> Bytes.Decode.Extra.andMap (Bytes.Decode.unsignedInt16 LE)
+        -- Tile
+        |> Bytes.Decode.Extra.andMap Bytes.Decode.unsignedInt8
         -- Fonts
         |> Bytes.Decode.Extra.andMap (BytesExtraExtra.sizedListDecoder Font.decoder)
