@@ -202,40 +202,40 @@ hash node_ =
     case node_.type_ of
         Rect { x, y, w, h, color } ->
             seed
-                |> FNV1a.updateInt32 x
-                |> FNV1a.updateInt32 y
-                |> FNV1a.updateInt32 w
-                |> FNV1a.updateInt32 h
+                |> FNV1a.updateInt16 x
+                |> FNV1a.updateInt16 y
+                |> FNV1a.updateInt16 w
+                |> FNV1a.updateInt16 h
                 |> FNV1a.updateInt8 color
 
         RectFill { x, y, w, h, color } ->
             seed
-                |> FNV1a.updateInt32 x
-                |> FNV1a.updateInt32 y
-                |> FNV1a.updateInt32 w
-                |> FNV1a.updateInt32 h
+                |> FNV1a.updateInt16 x
+                |> FNV1a.updateInt16 y
+                |> FNV1a.updateInt16 w
+                |> FNV1a.updateInt16 h
                 |> FNV1a.updateInt8 color
 
         XLine { x, y, len, color } ->
             seed
-                |> FNV1a.updateInt32 x
-                |> FNV1a.updateInt32 y
-                |> FNV1a.updateInt32 len
+                |> FNV1a.updateInt16 x
+                |> FNV1a.updateInt16 y
+                |> FNV1a.updateInt16 len
                 |> FNV1a.updateInt8 color
 
         YLine { x, y, len, color } ->
             seed
-                |> FNV1a.updateInt32 x
-                |> FNV1a.updateInt32 y
-                |> FNV1a.updateInt32 len
+                |> FNV1a.updateInt16 x
+                |> FNV1a.updateInt16 y
+                |> FNV1a.updateInt16 len
                 |> FNV1a.updateInt8 color
 
         Text r ->
             seed
-                |> FNV1a.updateInt32 r.x
-                |> FNV1a.updateInt32 r.y
+                |> FNV1a.updateInt16 r.x
+                |> FNV1a.updateInt16 r.y
                 |> FNV1a.updateInt8 r.color
-                |> FNV1a.updateInt32 r.fontIndex
+                |> FNV1a.updateInt8 r.fontIndex
                 |> FNV1a.updateString r.text
 
         Group r ->
