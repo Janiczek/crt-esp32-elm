@@ -3,18 +3,6 @@
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 
-function readAllStdin() {
-  return new Promise((resolve) => {
-    let data = "";
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (chunk) => {
-      data += chunk;
-    });
-    process.stdin.on("end", () => resolve(data));
-    process.stdin.on("error", () => resolve(""));
-  });
-}
-
 function runProcess(cmd, args, { cwd }) {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, {
@@ -53,8 +41,6 @@ function deny(command,reason) {
 }
 
 async function main() {
-  await readAllStdin(); // keep parity with prior hook; input currently unused
-
   const projectDir = process.env.CURSOR_PROJECT_DIR ?? process.cwd();
   const vdomDir = path.join(projectDir, "vdom");
 

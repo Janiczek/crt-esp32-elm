@@ -6,19 +6,31 @@
 #include "font.h"
 #include "node.h"
 #include "node_draw.h"
-#include "dirty.h"
 #include "prelude.h"
 
 //----------------------------------------------
 // VDOM-specific
-Node* rootNodeOld;
-Node* rootNodeNew;
 
 // Double-buffered node pools for deserialized trees.
-// Pool that owns rootNodeOld is serialPool[1-serialPoolIndex],
-// Pool that owns rootNodeNew is serialPool[serialPoolIndex].
+// The last known node is in serialPool[serialPoolIndex].
+// The new node will be written to serialPool[1-serialPoolIndex].
 static NodePool serialPool[2];
 static int serialPoolIndex = 0;
+Node* rootNode = &serialPool[serialPoolIndex].nodes[0];
+
+static uint16_t dirtyTileCount = 0; // number of {tx,ty} pairs
+static uint8_t dirtyTiles[TILE_COUNT * 2];
+
+static inline void dirtyTileBufClear() {
+  dirtyTileCount = 0;
+}
+
+static inline void dirtyTileBufPush(uint8_t tx, uint8_t ty) {
+  if (dirtyTileCount >= TILE_COUNT) return;
+  uint16_t ii = (dirtyTileCount++) * 2;
+  dirtyTiles[ii] = tx;
+  dirtyTiles[ii + 1] = ty;
+}
 
 bool lastBtnPressed = false;
 void handleButton() {
@@ -27,15 +39,6 @@ void handleButton() {
     // some onClick handler here
   }
   lastBtnPressed = btnPressed;
-}
-
-void onNewRootNode() {
-  // Assumption: something has done this already:
-  // rootNodeOld = rootNodeNew;
-  // rootNodeNew = ... whatever ...;
-  dirty_clear();
-  markDirtyTiles();
-  redrawDirtyTiles();
 }
 
 // Needs to correspond to elm/Command.elm
@@ -63,6 +66,46 @@ static inline bool commandNeedsAck(uint8_t cmd) {
       complain("commandNeedsAck: Unknown command");
       return false;
     }
+  }
+}
+
+// implicitly uses `nodeNew` and will walk it back-to-front and draw nodes
+void drawTile(int tx0, int ty0) {
+  BoundingBox tileBbox = { tx0, ty0, TILE_SIZE, TILE_SIZE };
+
+  // Walk the new root and draw all nodes whose bbox intersects the tile
+  nodeWalkPreOrderDFS(rootNode, [&](Node* node) -> bool {
+    if (!bboxIntersects(&node->bbox, &tileBbox))
+      return false; // Short-circuit if node not relevant to the tile
+
+    switch (node->type) {
+      case NODE_RECT:     node_draw_tileRect(node,tx0,ty0);     break;
+      case NODE_RECTFILL: node_draw_tileRectFill(node,tx0,ty0); break;
+      case NODE_XLINE:    node_draw_tileXLine(node,tx0,ty0);    break;
+      case NODE_YLINE:    node_draw_tileYLine(node,tx0,ty0);    break;
+      case NODE_TEXT:     node_draw_tileText(node,tx0,ty0);     break;
+      case NODE_GROUP:    break; // Nothing to do. We automatically traverse the group contents in the outside loop.
+      default:            break;
+    }
+
+    return true;
+  });
+}
+
+static inline void redrawTile(int tx, int ty) {
+  int x0 = tx * TILE_SIZE;
+  int y0 = ty * TILE_SIZE;
+
+  // Clear and draw
+  video.fillRect(x0, y0, TILE_SIZE, TILE_SIZE, COLOR_BLACK);
+  drawTile(x0, y0);
+}
+
+static inline void redrawBufferedDirtyTiles() {
+  for (uint16_t ii = 0; ii < dirtyTileCount * 2; ii += 2) {
+    uint8_t tx = dirtyTiles[ii];
+    uint8_t ty = dirtyTiles[ii + 1];
+    redrawTile((int)tx, (int)ty);
   }
 }
 
@@ -122,10 +165,22 @@ void handleSerial() {
           break;
         }
 
-        rootNodeOld = rootNodeNew;
-        rootNodeNew = parsedNode;
         serialPoolIndex = newPoolIdx;
-        onNewRootNode();
+        rootNode = parsedNode;
+
+        // After the node, Elm appends dirty tiles: u16 count, then count*(u8 tx, u8 ty).
+        dirtyTileBufClear();
+        uint16_t count = read_u16_le();
+        if (count > TILE_COUNT) complain("Dirty tile overflow: count > TILE_COUNT");
+        for (uint16_t i = 0; i < count; i++) {
+          uint8_t tx = read_u8();
+          uint8_t ty = read_u8();
+          if (i < TILE_COUNT) {
+            dirtyTileBufPush(tx, ty);
+          }
+          // else: drain/discard extra pairs to keep stream aligned
+        }
+
         ok = true;
         break;
       }
@@ -134,124 +189,13 @@ void handleSerial() {
         break;
       }
     }
-    if (ok && commandNeedsAck(cmd)) writeAck();
-  }
-}
-
-// DIFFING
-
-// TODO PERF: make dirty_mark_bbox specialized for each node type, eg. for
-// diagonal lines we don't want to mark the whole bbox since many tiles will be
-// unaffected.
-
-// implicitly returns the dirty tiles into the global `dirty`
-void diffNode(Node* oldRoot, Node* newRoot) {
-  if (oldRoot->hash == newRoot->hash) return; // Nothing changed!
-
-  if (oldRoot->type == NODE_GROUP && newRoot->type == NODE_GROUP) {
-    diffChildren(oldRoot, newRoot);
-  } else if (// Text-vs-Text when only the text changed
-             oldRoot->type == NODE_TEXT && newRoot->type == NODE_TEXT &&
-             oldRoot->u.text.x == newRoot->u.text.x &&
-             oldRoot->u.text.y == newRoot->u.text.y &&
-             oldRoot->u.text.font_index == newRoot->u.text.font_index &&
-             oldRoot->u.text.color == newRoot->u.text.color) {
-    const FontMono1B* font = fonts[oldRoot->u.text.font_index];
-    int gw = (int)font->glyph_w;
-    int lineHeight = (int)font->glyph_h + (int)font->extra_line_height;
-    dirty_mark_text_diff(oldRoot->u.text.text, newRoot->u.text.text,
-                         oldRoot->u.text.x, oldRoot->u.text.y, gw, lineHeight);
-  } else {
-    // eg. going from TEXT -> GROUP: let's mark both.
-    //
-    // Only in GROUP -> GROUP do we not mark both groups blindly and instead
-    // diff their contents.
-    dirty_mark_bbox(oldRoot->bbox);
-    dirty_mark_bbox(newRoot->bbox);
-  }
-}
-
-void diffChildren(Node* oldGroup, Node* newGroup) {
-  bool matched[NODE_GROUP_MAX_CHILDREN] = { false };
-
-  for (int i = 0; i < oldGroup->u.group.child_count; i++) {
-    Node* oldChild = oldGroup->u.group.children[i];
-    Node* newChild = NULL;
-    int newIndex = -1;
-
-    // Find by key so that we don't DELETE + INSERT when the node has just moved.
-    for (int j = 0; j < newGroup->u.group.child_count; j++) {
-      if (oldChild->key == newGroup->u.group.children[j]->key) {
-        newChild = newGroup->u.group.children[j];
-        newIndex = j;
-        break;
+    if (ok && commandNeedsAck(cmd)) {
+      writeAck();
+      if (cmd == CMD_SET_ROOT_NODE) {
+        redrawBufferedDirtyTiles();
       }
     }
-
-    if (newChild == NULL) {
-      // DELETION: no corresponding new child found
-      dirty_mark_bbox(oldChild->bbox);
-    } else {
-      // UPDATE: child found but it's yet unclear if it changed or not.
-      // We'll have to diff it.
-      matched[newIndex] = true;
-      diffNode(oldChild, newChild);
-    }
   }
-
-  for (int j = 0; j < newGroup->u.group.child_count; j++) {
-    // INSERTION: unmatched new children must be new
-    if (!matched[j]) {
-      dirty_mark_bbox(newGroup->u.group.children[j]->bbox);
-    }
-  }
-}
-
-inline void markDirtyTiles() {
-  diffNode(rootNodeOld, rootNodeNew);
-
-  // TODO workaround - hopefully not needed
-  // // If diff marked no tiles (e.g. identical tree or initial default scene), force draw of new root bbox
-  // if (!dirty_any() && rootNodeNew)
-  //   dirty_mark_bbox(rootNodeNew->bbox);
-}
-
-// implicitly uses `nodeNew` and will walk it back-to-front and draw nodes
-void drawTile(int tx, int ty) {
-  int tx0 = tx * TILE_SIZE;
-  int ty0 = ty * TILE_SIZE;
-  BoundingBox tileBbox = { tx0, ty0, TILE_SIZE, TILE_SIZE };
-
-  // Walk the new root and draw all nodes whose bbox intersects the tile
-  nodeWalkPreOrderDFS(rootNodeNew, [&](Node* node) -> bool {
-    if (!bboxIntersects(&node->bbox, &tileBbox))
-      return false; // Short-circuit if node not relevant to the tile
-
-    switch (node->type) {
-      case NODE_RECT:     node_draw_tileRect(node,tx0,ty0);     break;
-      case NODE_RECTFILL: node_draw_tileRectFill(node,tx0,ty0); break;
-      case NODE_XLINE:    node_draw_tileXLine(node,tx0,ty0);    break;
-      case NODE_YLINE:    node_draw_tileYLine(node,tx0,ty0);    break;
-      case NODE_TEXT:     node_draw_tileText(node,tx0,ty0);     break;
-      case NODE_GROUP:    break; // Nothing to do
-      default:            break;
-    }
-
-    return true;
-  });
-}
-
-void redrawDirtyTiles() {
-  dirty_foreach([](int tx, int ty) {
-    int x0 = tx * TILE_SIZE;
-    int y0 = ty * TILE_SIZE;
-
-    // Clear the tile
-    video.fillRect(x0, y0, TILE_SIZE, TILE_SIZE, COLOR_BLACK);
-
-    // Draw the scene inside this tile
-    drawTile(tx, ty);
-  });
 }
 
 void setup()
@@ -264,39 +208,23 @@ void setup()
   // esp32lib-specific
   video.init(CompMode::MODENTSC240P, DAC_PIN, HAVE_VOLTAGE_DIVIDER);
 
-  // VDOM-specific
-
-  // Old root: empty node
-  serialPool[0].node_cursor = 0;
-  serialPool[0].ptr_cursor = 0;
-  Node* emptyNode = node_pool_alloc(&serialPool[0]);
-  *emptyNode = nodeEmpty(0);
-
-  // New root: initial scene
-  serialPool[1].node_cursor = 0;
-  serialPool[1].ptr_cursor = 0;
-  Node* textNode = node_pool_alloc(&serialPool[1]);
-  char* msg = (char*)malloc(strlen("Waiting for commands from the Command Centre...") + 1);
-  if (!msg) {
-    complain("Failed to allocate memory for default message");
-    *textNode = nodeEmpty(0);
-  } else {
-    strcpy(msg, "Waiting for commands from the Command Centre...");
-    *textNode = nodeText(0, X_MIN, Y_MIN, msg, 0, COLOR_WHITE);
+  // Start with empty scenes.
+  for (int i = 0; i < 2; ++i) {
+    node_pool_reset(&serialPool[i]);
+    Node* root = node_pool_alloc(&serialPool[i]);
+    if (root) {
+      *root = nodeEmpty();
+    }
   }
-
-  rootNodeOld = &serialPool[0].nodes[0];
-  rootNodeNew = &serialPool[1].nodes[0];
-  onNewRootNode();
-
-  serialPoolIndex = 1;
+  rootNode = &serialPool[serialPoolIndex].nodes[0];
 }
 
 void loop()
 {
-  // We don't need to react to events etc. faster than 60FPS.
-  // If yes, move this enforceFps() to onNewRootNode().
-  enforceFps();
+  // TODO: disabled for now - how does the system behave?
+  //// We don't need to react to events etc. faster than 60FPS.
+  //// If yes, move this enforceFps() to onNewRootNode().
+  //enforceFps();
 
   handleButton();
   handleSerial();

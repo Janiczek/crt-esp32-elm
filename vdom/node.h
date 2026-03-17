@@ -5,7 +5,6 @@
 #include <stdio.h>
 
 #include "prelude.h"
-#include "hash.h"
 #include "bbox.h"
 #include "font.h"
 #include "serial.h"
@@ -29,9 +28,7 @@ typedef struct Node Node;
 // actual definition
 typedef struct Node {
   NodeType type;
-  uint8_t key;
   BoundingBox bbox;
-  uint32_t hash;
   union {
     struct { int x, y, w, h; uint8_t color; } rect;
     struct { int x, y, len; uint8_t color; } xline;
@@ -41,27 +38,21 @@ typedef struct Node {
   } u;
 } Node;
 
-static inline Node nodeGroup(uint8_t key, Node** children, int child_count) {
+static inline Node nodeGroup(Node** children, int child_count) {
   Node n = {};
   n.type = NODE_GROUP;
-  n.key = key;
 
   // CONTENT
   n.u.group.children = children;
   n.u.group.child_count = child_count;
 
-  // BBOX + HASH (looping over children)
+  // BBOX (looping over children)
   if (child_count == 0) {
     // BBOX
     n.bbox.x = 0;
     n.bbox.y = 0;
     n.bbox.w = 0;
     n.bbox.h = 0;
-
-    // HASH
-    uint32_t h = hash_init;
-    h = hash_update_u8(h, n.type);
-    n.hash = h;
 
     return n;
   }
@@ -71,9 +62,6 @@ static inline Node nodeGroup(uint8_t key, Node** children, int child_count) {
   int x1 = children[0]->bbox.x + children[0]->bbox.w;
   int y1 = children[0]->bbox.y + children[0]->bbox.h;
 
-  uint32_t h = hash_init;
-  h = hash_update_u8(h, n.type);
-
   for (int i = 0; i < child_count; i++) {
     Node* child = children[i];
 
@@ -82,9 +70,6 @@ static inline Node nodeGroup(uint8_t key, Node** children, int child_count) {
     if (child->bbox.y < y0) y0 = child->bbox.y;
     if (child->bbox.x + child->bbox.w > x1) x1 = child->bbox.x + child->bbox.w;
     if (child->bbox.y + child->bbox.h > y1) y1 = child->bbox.y + child->bbox.h;
-
-    // HASH
-    h = hash_update_u32(h, child->hash);
   }
 
   n.bbox.x = x0; 
@@ -92,19 +77,16 @@ static inline Node nodeGroup(uint8_t key, Node** children, int child_count) {
   n.bbox.w = x1 - x0; 
   n.bbox.h = y1 - y0;
 
-  n.hash = h;
-
   return n;
 }
 
-static inline Node nodeEmpty(uint8_t key) {
-  return nodeGroup(key, nullptr, 0);
+static inline Node nodeEmpty() {
+  return nodeGroup(nullptr, 0);
 }
 
-static inline Node nodeRect(uint8_t key, int x, int y, int w, int h, uint8_t color) {
+static inline Node nodeRect(int x, int y, int w, int h, uint8_t color) {
   Node n = {};
   n.type = NODE_RECT;
-  n.key = key;
 
   // BBOX
   n.bbox.x = x; 
@@ -119,24 +101,12 @@ static inline Node nodeRect(uint8_t key, int x, int y, int w, int h, uint8_t col
   n.u.rect.h = h; 
   n.u.rect.color = color;
 
-  // HASH
-  uint32_t hv = hash_init;
-  hv = hash_update_u8(hv, n.type);
-  hv = hash_update_u8(hv, n.key);
-  hv = hash_update_u32(hv, (uint32_t)x);
-  hv = hash_update_u32(hv, (uint32_t)y);
-  hv = hash_update_u32(hv, (uint32_t)w);
-  hv = hash_update_u32(hv, (uint32_t)h);
-  hv = hash_update_u8(hv, color);
-  n.hash = hv;
-
   return n;
 }
 
-static inline Node nodeRectFill(uint8_t key, int x, int y, int w, int h, uint8_t color) {
+static inline Node nodeRectFill(int x, int y, int w, int h, uint8_t color) {
   Node n = {};
   n.type = NODE_RECTFILL;
-  n.key = key;
 
   // BBOX
   n.bbox.x = x; 
@@ -151,24 +121,12 @@ static inline Node nodeRectFill(uint8_t key, int x, int y, int w, int h, uint8_t
   n.u.rect.h = h; 
   n.u.rect.color = color;
 
-  // HASH
-  uint32_t hv = hash_init;
-  hv = hash_update_u8(hv, n.type);
-  hv = hash_update_u8(hv, n.key);
-  hv = hash_update_u32(hv, (uint32_t)x);
-  hv = hash_update_u32(hv, (uint32_t)y);
-  hv = hash_update_u32(hv, (uint32_t)w);
-  hv = hash_update_u32(hv, (uint32_t)h);
-  hv = hash_update_u8(hv, color);
-  n.hash = hv;
-
   return n;
 }
 
-static inline Node nodeXLine(uint8_t key, int x, int y, int len, uint8_t color) {
+static inline Node nodeXLine(int x, int y, int len, uint8_t color) {
   Node n = {};
   n.type = NODE_XLINE;
-  n.key = key;
 
   // BBOX
   n.bbox.x = x; 
@@ -182,23 +140,12 @@ static inline Node nodeXLine(uint8_t key, int x, int y, int len, uint8_t color) 
   n.u.xline.len = len; 
   n.u.xline.color = color;
 
-  // HASH
-  uint32_t h = hash_init;
-  h = hash_update_u8(h, n.type);
-  h = hash_update_u8(h, n.key);
-  h = hash_update_u32(h, (uint32_t)x);
-  h = hash_update_u32(h, (uint32_t)y);
-  h = hash_update_u32(h, (uint32_t)len);
-  h = hash_update_u8(h, color);
-  n.hash = h;
-
   return n;
 }
 
-static inline Node nodeYLine(uint8_t key, int x, int y, int len, uint8_t color) {
+static inline Node nodeYLine(int x, int y, int len, uint8_t color) {
   Node n = {};
   n.type = NODE_YLINE;
-  n.key = key;
 
   // BBOX
   n.bbox.x = x;
@@ -212,23 +159,12 @@ static inline Node nodeYLine(uint8_t key, int x, int y, int len, uint8_t color) 
   n.u.yline.len = len;
   n.u.yline.color = color;
 
-  // HASH
-  uint32_t h = hash_init;
-  h = hash_update_u8(h, n.type);
-  h = hash_update_u8(h, n.key);
-  h = hash_update_u32(h, (uint32_t)x);
-  h = hash_update_u32(h, (uint32_t)y);
-  h = hash_update_u32(h, (uint32_t)len);
-  h = hash_update_u8(h, color);
-  n.hash = h;
-
   return n;
 }
 
-static inline Node nodeText(uint8_t key, int x, int y, const char* text, int font_index, uint8_t color) {
+static inline Node nodeText(int x, int y, const char* text, int font_index, uint8_t color) {
   Node n = {};
   n.type = NODE_TEXT;
-  n.key = key;
 
   // BBOX
   n.bbox.x = x;
@@ -246,17 +182,6 @@ static inline Node nodeText(uint8_t key, int x, int y, const char* text, int fon
   n.u.text.text = text;
   n.u.text.font_index = font_index;
   n.u.text.color = color;
-
-  // HASH
-  uint32_t h = hash_init;
-  h = hash_update_u8(h, n.type);
-  h = hash_update_u8(h, n.key);
-  h = hash_update_u32(h, (uint32_t)x);
-  h = hash_update_u32(h, (uint32_t)y);
-  h = hash_update_u8(h, color);
-  if (text != nullptr) h = hash_update_cstr(h, text);
-  h = hash_update_u32(h, (uint32_t)font_index);
-  n.hash = h;
 
   return n;
 }
@@ -344,7 +269,6 @@ static inline void node_read_group_element(void* ctx) {
 
 static inline Node* node_read(NodePool* pool) {
   uint8_t type = read_u8();
-  uint32_t key = (uint32_t)read_u8();
 
   Node* slot = node_pool_alloc(pool);
   if (!slot) {
@@ -354,7 +278,7 @@ static inline Node* node_read(NodePool* pool) {
 
   switch (type) {
     case 0: // NODE_RECT
-      *slot = nodeRect(key,
+      *slot = nodeRect(
         read_i32_le(), // x
         read_i32_le(), // y
         read_i32_le(), // w
@@ -362,7 +286,7 @@ static inline Node* node_read(NodePool* pool) {
         read_u8()); // color
       return slot;
     case 1: // NODE_RECTFILL
-      *slot = nodeRectFill(key,
+      *slot = nodeRectFill(
         read_i32_le(), // x
         read_i32_le(), // y
         read_i32_le(), // w
@@ -370,14 +294,14 @@ static inline Node* node_read(NodePool* pool) {
         read_u8()); // color
       return slot;
     case 2: // NODE_XLINE
-      *slot = nodeXLine(key,
+      *slot = nodeXLine(
         read_i32_le(), // x
         read_i32_le(), // y
         read_i32_le(), // len
         read_u8()); // color
       return slot;
     case 3: // NODE_YLINE
-      *slot = nodeYLine(key,
+      *slot = nodeYLine(
         read_i32_le(), // x
         read_i32_le(), // y
         read_i32_le(), // len
@@ -389,7 +313,7 @@ static inline Node* node_read(NodePool* pool) {
       int font_index = (int)read_i32_le();
       uint8_t color = read_u8();
       char* str = read_sized_string();
-      *slot = nodeText(key, x, y, str, font_index, color);
+      *slot = nodeText(x, y, str, font_index, color);
       return slot;
     }
     case 5: { // NODE_GROUP
@@ -401,13 +325,13 @@ static inline Node* node_read(NodePool* pool) {
       Node** children = (count > 0) ? node_pool_alloc_ptrs(pool, count) : nullptr;
       if (count > 0 && !children) return nullptr;
       if (count == 0) {
-        *slot = nodeGroup(key, children, count);
+        *slot = nodeGroup(children, count);
         return slot;
       }
       struct node_read_ctx g = { .pool = pool, .children_out = children, .n = 0 };
       for (uint16_t i = 0; i < count; i++)
         node_read_group_element(&g);
-      *slot = nodeGroup(key, children, g.n);
+      *slot = nodeGroup(children, g.n);
       return slot;
     }
     default: {

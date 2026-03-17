@@ -10,3 +10,5 @@ elm-stuff/
 /vdom/font/pcf/
 /vdom/elm.js
 /vdom/*.elf
+.arduino-build/
+.arduino-cli-build/

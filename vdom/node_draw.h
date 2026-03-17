@@ -4,7 +4,6 @@
 #include "globals.h"
 #include "graphics_extra.h"
 #include "prelude.h"
-#include "dirty.h"
 #include "font_draw.h"
 
 void node_draw_tileXLine_inner(int x0, int x1, int y, uint8_t color, int tx0, int ty0) {

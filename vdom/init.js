@@ -27,6 +27,25 @@ const ACK_SEQUENCE = [0xFF, 0xEE, 0xFF, 0xEE];
 let commandQueue = [];
 let isWaitingForAck = false;
 
+function bytesToAsciiVisible(u8) {
+    let out = '';
+    for (let i = 0; i < u8.length; i++) {
+        const b = u8[i];
+        if (b === 0x0a) out += '\n';
+        else if (b === 0x0d) out += '\r';
+        else if (b === 0x09) out += '\t';
+        else if (b === 0x00) out += '\\0';
+        else if (b >= 0x20 && b <= 0x7e) out += String.fromCharCode(b);
+        else out += '\\x' + (b < 16 ? '0' : '') + b.toString(16);
+    }
+    return out;
+}
+
+function logSerialRxBytes(u8) {
+    if (!u8 || u8.length === 0) return;
+    console.log(`[C->Elm] ${bytesToAsciiVisible(u8)}`);
+}
+
 async function trySendNextCommand() {
     if (isWaitingForAck || commandQueue.length === 0 || !writer) return;
     const item = commandQueue.shift();
@@ -85,7 +104,6 @@ async function startContinuousRead() {
             flushTimeoutId = setTimeout(() => {
                 if (buffer.length > 0) {
                     const text = decoder.decode(buffer);
-                    console.log('Serial data:', text);
                     buffer = new Uint8Array(0);
                 }
                 flushTimeoutId = null;
@@ -108,6 +126,7 @@ async function startContinuousRead() {
                 if (done) {
                     break;
                 }
+                logSerialRxBytes(value);
                 scanForAck(value);
                 appendToBuffer(value);
                 scheduleFlush();
@@ -166,7 +185,7 @@ app.ports.disconnect.subscribe(async () => {
 app.ports.sendCommand.subscribe(([commandBytes, needsAck]) => {
     try {
         const view = new Uint8Array(commandBytes.buffer, commandBytes.byteOffset, commandBytes.byteLength);
-        console.log('sendCommand bytes (length, bytes, needsAck):', view.length, Array.from(view), needsAck);
+        console.log('[Elm->C] Sending command (length, bytes, needsAck):', view.length, Array.from(view), needsAck);
     } catch (e) {
         console.error('Failed to inspect sendCommand bytes:', e);
     }
@@ -194,6 +213,7 @@ function byteStream(reader) {
                 if (buf.length - offset < n) complainFatal('Stream ended unexpectedly');
                 return;
             }
+            logSerialRxBytes(value);
             if (offset >= buf.length) {
                 buf = value;
                 offset = 0;

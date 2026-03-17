@@ -8,18 +8,15 @@
 #define DISPLAY_W 400 // These are true for CompMode::MODENTSC240P
 #define DISPLAY_H 240
 
+#define TILE_SIZE 8
+#define TILE_COLS (DISPLAY_W / TILE_SIZE)
+#define TILE_ROWS (DISPLAY_H / TILE_SIZE)
+#define TILE_COUNT (TILE_COLS * TILE_ROWS)
+
 #define MY_CRT_PADDING_L 25
 #define MY_CRT_PADDING_R 35
 #define MY_CRT_PADDING_T 10
 #define MY_CRT_PADDING_B 10
-#define X_MIN MY_CRT_PADDING_L
-#define X_MAX (DISPLAY_W - MY_CRT_PADDING_R)
-#define Y_MIN MY_CRT_PADDING_T
-#define Y_MAX (DISPLAY_H - MY_CRT_PADDING_B)
-#define USABLE_W (X_MAX - X_MIN + 1)
-#define USABLE_H (Y_MAX - Y_MIN + 1)
-#define X_CENTER (USABLE_W/2 + X_MIN)
-#define Y_CENTER (USABLE_H/2 + Y_MIN)
 
 #define COLOR_BLACK 0
 #define COLOR_GRAY 127
