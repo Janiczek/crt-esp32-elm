@@ -1,6 +1,7 @@
-module Fuzzers exposing (color, node)
+module Fuzzers exposing (color, node, bbox)
 
 import Color exposing (Color)
+import BoundingBox exposing (BoundingBox)
 import Fuzz exposing (Fuzzer)
 import Node exposing (Node)
 
@@ -13,6 +14,13 @@ color =
         , Fuzz.constant Color.white
         ]
 
+bbox : Fuzzer BoundingBox
+bbox =
+    Fuzz.map4 (\x y w h -> { x = x, y = y, w = w, h = h })
+        Fuzz.int
+        Fuzz.int
+        Fuzz.int
+        Fuzz.int
 
 node : Fuzzer Node
 node =

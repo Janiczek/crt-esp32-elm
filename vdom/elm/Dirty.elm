@@ -1,14 +1,14 @@
 module Dirty exposing
     ( TileGrid
     , diff, dirtyTilesEncoder
-    , markBbox_TEST, markRectBorder_TEST, textCellsUntilNewline_TEST, changedTextCells_TEST, allTextCells_TEST
+    , diffChildren_TEST, markBbox_TEST, markRectBorder_TEST, textCellsUntilNewline_TEST, changedTextCells_TEST, allTextCells_TEST
     )
 
 {-|
 
 @docs TileGrid
 @docs diff, dirtyTilesEncoder
-@docs markBbox_TEST, markRectBorder_TEST, textCellsUntilNewline_TEST, changedTextCells_TEST, allTextCells_TEST
+@docs diffChildren_TEST, markBbox_TEST, markRectBorder_TEST, textCellsUntilNewline_TEST, changedTextCells_TEST, allTextCells_TEST
 
 -}
 
@@ -366,3 +366,8 @@ changedTextCells_TEST =
 allTextCells_TEST : Int -> Int -> List Char -> List ( Int, Int )
 allTextCells_TEST =
     allTextCells
+
+
+diffChildren_TEST : TileGrid -> List Font -> List Node -> List Node -> Set ( Int, Int )
+diffChildren_TEST =
+    diffChildren

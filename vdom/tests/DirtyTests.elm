@@ -15,7 +15,89 @@ import Test exposing (Test)
 suite : Test
 suite =
     Test.describe "Dirty"
-        [ Test.describe "changedTextCells"
+        [ Test.describe "diffChildren"
+            (let
+                basicGrid =
+                    { tileSize = 8
+                    , tileCols = 4
+                    , tileRows = 4
+                    }
+
+                color =
+                    Color.black
+
+                rect key bbox =
+                    Node.rect key
+                        { x = bbox.x
+                        , y = bbox.y
+                        , w = bbox.w
+                        , h = bbox.h
+                        , color = color
+                        }
+
+                bboxA : BoundingBox
+                bboxA =
+                    { x = 0, y = 0, w = 8, h = 8 }
+
+                bboxB : BoundingBox
+                bboxB =
+                    { x = 8, y = 0, w = 8, h = 8 }
+
+                bboxB2 : BoundingBox
+                bboxB2 =
+                    { x = 8, y = 0, w = 16, h = 8 }
+
+                bboxC : BoundingBox
+                bboxC =
+                    { x = 0, y = 8, w = 8, h = 8 }
+
+                nodeA =
+                    rect "a" bboxA
+
+                nodeB =
+                    rect "b" bboxB
+
+                nodeB2 =
+                    rect "b" bboxB2
+
+                nodeC =
+                    rect "c" bboxC
+             in
+             [ Test.test "update only (same key): equals diff of matched nodes" <|
+                \_ ->
+                    Dirty.diffChildren_TEST basicGrid [] [ nodeB ] [ nodeB2 ]
+                        |> Expect.equal (Dirty.diff basicGrid [] nodeB nodeB2)
+             , Test.test "insert only: marks inserted bbox" <|
+                \_ ->
+                    Dirty.diffChildren_TEST basicGrid [] [] [ nodeC ]
+                        |> Expect.equal (Dirty.markBbox_TEST basicGrid nodeC.bbox)
+             , Test.test "delete only: marks deleted bbox" <|
+                \_ ->
+                    Dirty.diffChildren_TEST basicGrid [] [ nodeA ] []
+                        |> Expect.equal (Dirty.markBbox_TEST basicGrid nodeA.bbox)
+             , Test.test "mixed update+insert+delete: union of update diff + inserted bbox + deleted bbox (order independent)" <|
+                \_ ->
+                    let
+                        expected =
+                            Dirty.diff basicGrid [] nodeB nodeB2
+                                |> Set.union (Dirty.markBbox_TEST basicGrid nodeA.bbox)
+                                |> Set.union (Dirty.markBbox_TEST basicGrid nodeC.bbox)
+                    in
+                    Dirty.diffChildren_TEST basicGrid [] [ nodeA, nodeB ] [ nodeB2, nodeC ]
+                        |> Expect.equal expected
+             , Test.test "mixed update+insert+delete: still works if child order differs" <|
+                \_ ->
+                    let
+                        expected =
+                            Dirty.diff basicGrid [] nodeB nodeB2
+                                |> Set.union (Dirty.markBbox_TEST basicGrid nodeA.bbox)
+                                |> Set.union (Dirty.markBbox_TEST basicGrid nodeC.bbox)
+                    in
+                    Dirty.diffChildren_TEST basicGrid [] [ nodeB, nodeA ] [ nodeC, nodeB2 ]
+                        |> Expect.equal expected
+             ]
+            )
+        , Test.describe "changedTextCells"
             [ Test.describe "unit tests" <|
                 let
                     testCases :
@@ -420,6 +502,60 @@ suite =
                                 Set.diff
                                     (Dirty.markRectBorder_TEST basicGrid largeBbox)
                                     (Dirty.markRectBorder_TEST basicGrid smallBbox)
+                        in
+                        Dirty.diff basicGrid [] oldRoot newRoot
+                            |> Expect.equal expected
+                ]
+            , Test.describe "Group-Group scenes"
+                [ Test.test "update+insert+delete via key matching" <|
+                    \_ ->
+                        let
+                            color =
+                                Color.black
+
+                            rect key bbox =
+                                Node.rect key
+                                    { x = bbox.x
+                                    , y = bbox.y
+                                    , w = bbox.w
+                                    , h = bbox.h
+                                    , color = color
+                                    }
+
+                            bboxA =
+                                { x = 0, y = 0, w = 8, h = 8 }
+
+                            bboxB =
+                                { x = 8, y = 0, w = 8, h = 8 }
+
+                            bboxB2 =
+                                { x = 8, y = 0, w = 16, h = 8 }
+
+                            bboxC =
+                                { x = 0, y = 8, w = 8, h = 8 }
+
+                            oldA =
+                                rect "a" bboxA
+
+                            oldB =
+                                rect "b" bboxB
+
+                            newB =
+                                rect "b" bboxB2
+
+                            newC =
+                                rect "c" bboxC
+
+                            oldRoot =
+                                Node.group "g" [ oldA, oldB ]
+
+                            newRoot =
+                                Node.group "g" [ newB, newC ]
+
+                            expected =
+                                Dirty.diff basicGrid [] oldB newB
+                                    |> Set.union (Dirty.markBbox_TEST basicGrid oldA.bbox)
+                                    |> Set.union (Dirty.markBbox_TEST basicGrid newC.bbox)
                         in
                         Dirty.diff basicGrid [] oldRoot newRoot
                             |> Expect.equal expected

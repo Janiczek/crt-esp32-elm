@@ -20,8 +20,28 @@ empty =
 
 union : BoundingBox -> BoundingBox -> BoundingBox
 union a b =
-    { x = min a.x b.x
-    , y = min a.y b.y
-    , w = max a.w b.w
-    , h = max a.h b.h
-    }
+    if a.w <= 0 || a.h <= 0 then
+        b
+
+    else if b.w <= 0 || b.h <= 0 then
+        a
+
+    else
+        let
+            x0 =
+                min a.x b.x
+
+            y0 =
+                min a.y b.y
+
+            x1 =
+                max (a.x + a.w) (b.x + b.w)
+
+            y1 =
+                max (a.y + a.h) (b.y + b.h)
+        in
+        { x = x0
+        , y = y0
+        , w = x1 - x0
+        , h = y1 - y0
+        }
