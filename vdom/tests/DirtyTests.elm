@@ -1,9 +1,12 @@
 module DirtyTests exposing (suite)
 
 import BoundingBox exposing (BoundingBox)
+import Color
 import Dirty
 import Expect
 import Fuzz exposing (Fuzzer)
+import Fuzzers
+import Node
 import Set
 import String.Extra
 import Test exposing (Test)
@@ -122,7 +125,7 @@ suite =
                         (\len ->
                             Fuzz.pair
                                 (stringOfLength len)
-                                (stringOfLength len)
+                                (stringOfLength (len + 1))
                         )
                 )
                 "if number of characters differ, output is non-empty"
@@ -373,5 +376,61 @@ suite =
                                     |> Expect.equal (Set.fromList c.expected)
                 in
                 List.map toTest cases
+            ]
+        , let
+            basicGrid =
+                { tileSize = 8
+                , tileCols = 4
+                , tileRows = 4
+                }
+          in
+          Test.describe "diff"
+            [ Test.describe "Rect (outline) scenes"
+                [ Test.test "two rects sharing top-left, same color, second larger: dirty tiles are right and bottom only" <|
+                    \_ ->
+                        let
+                            color =
+                                Color.black
+
+                            smallBbox =
+                                { x = 0, y = 0, w = 8, h = 8 }
+
+                            largeBbox =
+                                { x = 0, y = 0, w = 16, h = 16 }
+
+                            oldRoot =
+                                Node.rect "r"
+                                    { x = smallBbox.x
+                                    , y = smallBbox.y
+                                    , w = smallBbox.w
+                                    , h = smallBbox.h
+                                    , color = color
+                                    }
+
+                            newRoot =
+                                Node.rect "r"
+                                    { x = largeBbox.x
+                                    , y = largeBbox.y
+                                    , w = largeBbox.w
+                                    , h = largeBbox.h
+                                    , color = color
+                                    }
+
+                            expected =
+                                Set.diff
+                                    (Dirty.markRectBorder_TEST basicGrid largeBbox)
+                                    (Dirty.markRectBorder_TEST basicGrid smallBbox)
+                        in
+                        Dirty.diff basicGrid [] oldRoot newRoot
+                            |> Expect.equal expected
+                ]
+            , Test.fuzz Fuzzers.node "diff of two identical nodes is empty" <|
+                \node ->
+                    Dirty.diff basicGrid [] node node
+                        |> Expect.equal Set.empty
+            , Test.fuzz2 Fuzzers.node Fuzzers.node "commutativity" <|
+                \node1 node2 ->
+                    Dirty.diff basicGrid [] node1 node2
+                        |> Expect.equal (Dirty.diff basicGrid [] node2 node1)
             ]
         ]
