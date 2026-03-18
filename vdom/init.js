@@ -293,8 +293,14 @@ async function readEsp32Data(readerForInit) {
 
         const lengthBuf = await stream.readBytes(2);
         const dataLength = parseUint16LE(lengthBuf);
+        console.log('[JS C->Elm] ESP32 data length',dataLength);
 
         const dataBuf = await stream.readBytes(dataLength);
+
+        if (dataLength !== dataBuf.byteLength) {
+            complainFatal('ESP32 data length mismatch');
+        }
+
         return dataBuf.buffer;
     } catch (e) {
         if (e.name !== 'NetworkError') {
