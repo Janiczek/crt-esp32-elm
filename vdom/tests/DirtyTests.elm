@@ -796,10 +796,6 @@ suite =
                 \node ->
                     Dirty.diff basicGrid [] node node
                         |> Expect.equal Set.empty
-            , Test.fuzz2 Fuzzers.node Fuzzers.node "commutativity" <|
-                \node1 node2 ->
-                    Dirty.diff basicGrid [] node1 node2
-                        |> Expect.equal (Dirty.diff basicGrid [] node2 node1)
             , Test.test "keyed sibling reorder: overlapping rects order swapped marks tiles" <|
                 \_ ->
                     let

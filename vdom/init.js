@@ -26,6 +26,7 @@ const ACK_SEQUENCE = [0xFF, 0xEE, 0xFF, 0xEE];
 
 let commandQueue = [];
 let isWaitingForAck = false;
+let lastSentCommandTag = null;
 
 function bytesToAsciiVisible(u8) {
     let out = '';
@@ -115,7 +116,11 @@ async function startContinuousRead() {
                     if (ackMatched === ACK_SEQUENCE.length) {
                         ackMatched = 0;
                         isWaitingForAck = false;
-                        trySendNextCommand();
+                        const ackTag = lastSentCommandTag == null ? 0 : lastSentCommandTag;
+                        lastSentCommandTag = null;
+                        try {
+                            app.ports.onCommandAck.send({ commandTag: ackTag });
+                        } catch (_) {}
                     }
                 } else {
                     ackMatched = chunk[i] === ACK_SEQUENCE[0] ? 1 : 0;
@@ -212,21 +217,34 @@ app.ports.disconnect.subscribe(async () => {
     pendingCommands = [];
     commandQueue = [];
     isWaitingForAck = false;
+    lastSentCommandTag = null;
     app.ports.onDisconnectSuccessful.send(null);
 })
 
-app.ports.sendCommand.subscribe(([commandBytes, needsAck]) => {
-    try {
-        const view = new Uint8Array(commandBytes.buffer, commandBytes.byteOffset, commandBytes.byteLength);
-    } catch (e) {
-        console.error('Failed to inspect sendCommand bytes:', e);
+app.ports.sendCommand.subscribe(async ([commandBytes, needsAck]) => {
+    if (!writer) {
+        complainNonFatal('Cannot send command: not connected');
+        return;
     }
 
-    if (writer) {
-        const bytes = new Uint8Array(commandBytes.buffer, commandBytes.byteOffset, commandBytes.byteLength);
-        enqueueCommandAtMostOncePerFrame(bytes, needsAck);
-    } else {
-        complainNonFatal('Cannot send command: not connected');
+    if (isWaitingForAck) {
+        complainNonFatal('Cannot send command: waiting for ACK');
+        return;
+    }
+
+    const bytes = new Uint8Array(commandBytes.buffer, commandBytes.byteOffset, commandBytes.byteLength);
+    const commandTag = bytes.length > 0 ? bytes[0] : 0;
+
+    try {
+        await writer.write(bytes);
+    } catch (e) {
+        complainNonFatal('Failed to send command: ' + e.message);
+        return;
+    }
+
+    if (needsAck) {
+        isWaitingForAck = true;
+        lastSentCommandTag = commandTag;
     }
 })
 

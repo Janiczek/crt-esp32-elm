@@ -16,6 +16,7 @@ TODO:
 
 import Bitwise
 import Browser exposing (Document)
+import Browser.Events exposing (onAnimationFrame)
 import Bytes exposing (Bytes)
 import Bytes.Decode
 import Bytes.Encode
@@ -35,6 +36,7 @@ import List.Extra
 import Node exposing (Node, Type(..))
 import Svg exposing (Svg)
 import Svg.Attributes
+import Time
 
 
 type alias Flags =
@@ -51,13 +53,67 @@ type alias ModelNotConnected =
     }
 
 
+{-| Root node sync state between Elm and the ESP32.
+
+The ESP32 applies root updates in order. Elm can edit the desired root
+frequently, but it must debounce and it must not send a new root while an
+earlier `SetRootNode` command is awaiting ACK.
+
+Roles:
+
+  - `desiredRoot`: the root Elm wants the ESP32 to render next. What Elm shows in the preview.
+  - `ackedRoot`: the last root confirmed by an ACK; this is the diff base. What ESP32 is rendering.
+  - `inFlightRoot`: a root currently sent to the ESP32 and awaiting ACK. What ESP32 will render next.
+
+Debounce:
+
+  - While debouncing (`RootDebouncing` / `RootAwaitingAckWithPending`), the
+    `DebounceFrame` timestamp is captured and the send happens once the
+    debounce window has elapsed.
+
+-}
+type RootNode
+    = RootSynced
+        { root : Node
+        }
+    | RootDebouncing
+        { ackedRoot : Node
+        , desiredRoot : Node
+        , debounceStartedAtMs : Maybe Int
+        }
+    | RootAwaitingAck
+        { ackedRoot : Node
+        , inFlightRoot : Node
+        }
+    | RootAwaitingAckWithPending
+        { ackedRoot : Node
+        , inFlightRoot : Node
+        , desiredRoot : Node
+        , debounceStartedAtMs : Maybe Int
+        }
+
+
+desiredRoot : RootNode -> Node
+desiredRoot rootSyncState =
+    case rootSyncState of
+        RootSynced { root } ->
+            root
+
+        RootDebouncing r ->
+            r.desiredRoot
+
+        RootAwaitingAck { inFlightRoot } ->
+            inFlightRoot
+
+        RootAwaitingAckWithPending r ->
+            r.desiredRoot
+
+
 type alias ModelConnected =
     { esp32 : ESP32
     , videoConstants : VideoConstants
     , lastError : String
-    , textarea : String
-    , fontIndex : Int
-    , rootNode : Node
+    , rootNode : RootNode
     , rootNodeJsonText : String
     , rootNodeJsonError : Maybe String
     , selectedPath : List Int
@@ -75,15 +131,15 @@ type Msg
 
 
 type MsgConnected
-    = SetTextarea String
-    | SetFontIndex Int
-    | SelectNode (List Int)
+    = SelectNode (List Int)
     | UpdateNodeAtPath (List Int) String Type
     | InsertChild (List Int) Int Type
     | RemoveNode (List Int)
     | SetPreviewZoom Int
     | SetRootNodeJsonText String
     | RestoreRootNodeJson
+    | DebounceFrame Int
+    | CommandAcked { commandTag : Int }
 
 
 port connect : () -> Cmd msg
@@ -99,6 +155,9 @@ port onDisconnectSuccessful : (() -> msg) -> Sub msg
 
 
 port onFailure : (String -> msg) -> Sub msg
+
+
+port onCommandAck : ({ commandTag : Int } -> msg) -> Sub msg
 
 
 port sendCommand : ( Bytes, Bool ) -> Cmd msg
@@ -259,17 +318,56 @@ encodeNodeJson node =
         |> Encode.encode 0
 
 
-syncRootNodeJson : Node -> ModelConnected -> ModelConnected
-syncRootNodeJson newRoot modelConnected =
+{-| The debounce logic in subscriptions will automatically pick this up and send a command.
+-}
+commitNewRootNode : Node -> ModelConnected -> ModelConnected
+commitNewRootNode newRoot modelConnected =
     let
         json =
             encodeNodeJson newRoot
+
+        newRootNode =
+            case modelConnected.rootNode of
+                RootSynced { root } ->
+                    RootDebouncing
+                        { ackedRoot = root
+                        , desiredRoot = newRoot
+                        , debounceStartedAtMs = Nothing
+                        }
+
+                RootDebouncing { ackedRoot } ->
+                    RootDebouncing
+                        { ackedRoot = ackedRoot
+                        , desiredRoot = newRoot
+                        , debounceStartedAtMs = Nothing
+                        }
+
+                RootAwaitingAck { ackedRoot, inFlightRoot } ->
+                    RootAwaitingAckWithPending
+                        { ackedRoot = ackedRoot
+                        , inFlightRoot = inFlightRoot
+                        , desiredRoot = newRoot
+                        , debounceStartedAtMs = Nothing
+                        }
+
+                RootAwaitingAckWithPending { ackedRoot, inFlightRoot } ->
+                    RootAwaitingAckWithPending
+                        { ackedRoot = ackedRoot
+                        , inFlightRoot = inFlightRoot
+                        , desiredRoot = newRoot
+                        , debounceStartedAtMs = Nothing
+                        }
     in
     { modelConnected
-        | rootNode = newRoot
+        | rootNode = newRootNode
         , rootNodeJsonText = json
         , rootNodeJsonError = Nothing
     }
+
+
+setRootNodeDebounceWaitMs : Int
+setRootNodeDebounceWaitMs =
+    16
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -283,18 +381,8 @@ update msg model =
                 videoConstants_ =
                     videoConstants esp32
 
-                textarea =
-                    "Ready..."
-
-                fontIndex_ =
-                    if List.length esp32.fonts > 1 then
-                        1
-
-                    else
-                        0
-
                 node =
-                    textScene esp32 videoConstants_ textarea fontIndex_
+                    Node.empty
 
                 json =
                     encodeNodeJson node
@@ -303,16 +391,13 @@ update msg model =
                 { esp32 = esp32
                 , videoConstants = videoConstants_
                 , lastError = ""
-                , textarea = textarea
-                , fontIndex = fontIndex_
-                , rootNode = node
+                , rootNode = RootSynced { root = node }
                 , rootNodeJsonText = json
                 , rootNodeJsonError = Nothing
                 , selectedPath = []
                 , previewZoom = 3
                 }
-            , setRootNode esp32 videoConstants_ Node.empty node
-                |> Cmd.map MsgConnected
+            , Cmd.none
             )
 
         DisconnectRequested ->
@@ -349,32 +434,6 @@ update msg model =
 updateConnected : MsgConnected -> ModelConnected -> ( ModelConnected, Cmd MsgConnected )
 updateConnected msgConnected modelConnected =
     case msgConnected of
-        SetTextarea text ->
-            let
-                node =
-                    textScene modelConnected.esp32 modelConnected.videoConstants text modelConnected.fontIndex
-            in
-            ( { modelConnected | textarea = text }
-                |> syncRootNodeJson node
-            , setRootNode modelConnected.esp32 modelConnected.videoConstants modelConnected.rootNode node
-            )
-
-        SetFontIndex idx ->
-            let
-                maxIdx =
-                    List.length modelConnected.esp32.fonts - 1
-
-                fontIndex_ =
-                    clamp 0 maxIdx idx
-
-                node =
-                    textScene modelConnected.esp32 modelConnected.videoConstants modelConnected.textarea fontIndex_
-            in
-            ( { modelConnected | fontIndex = fontIndex_ }
-                |> syncRootNodeJson node
-            , setRootNode modelConnected.esp32 modelConnected.videoConstants modelConnected.rootNode node
-            )
-
         SelectNode path ->
             ( { modelConnected | selectedPath = path }
             , Cmd.none
@@ -383,7 +442,7 @@ updateConnected msgConnected modelConnected =
         UpdateNodeAtPath path key type_ ->
             let
                 existing =
-                    getNodeAtPath path modelConnected.rootNode
+                    getNodeAtPath path (desiredRoot modelConnected.rootNode)
 
                 newNode =
                     case type_ of
@@ -406,19 +465,19 @@ updateConnected msgConnected modelConnected =
                                     Node.fromKeyAndType modelConnected.esp32.fonts key type_
 
                                 Nothing ->
-                                    modelConnected.rootNode
+                                    desiredRoot modelConnected.rootNode
 
                 newRoot =
                     case existing of
                         Just _ ->
-                            setNodeAtPath modelConnected.esp32.fonts path newNode modelConnected.rootNode
+                            setNodeAtPath modelConnected.esp32.fonts path newNode (desiredRoot modelConnected.rootNode)
 
                         Nothing ->
-                            modelConnected.rootNode
+                            desiredRoot modelConnected.rootNode
             in
             ( modelConnected
-                |> syncRootNodeJson newRoot
-            , setRootNode modelConnected.esp32 modelConnected.videoConstants modelConnected.rootNode newRoot
+                |> commitNewRootNode newRoot
+            , Cmd.none
             )
 
         InsertChild parentPath index type_ ->
@@ -427,17 +486,17 @@ updateConnected msgConnected modelConnected =
                     defaultNodeForType modelConnected.esp32.fonts modelConnected.videoConstants type_
 
                 newRoot =
-                    insertChildAtPath modelConnected.esp32.fonts parentPath index newChild modelConnected.rootNode
+                    insertChildAtPath modelConnected.esp32.fonts parentPath index newChild (desiredRoot modelConnected.rootNode)
             in
             ( modelConnected
-                |> syncRootNodeJson newRoot
-            , setRootNode modelConnected.esp32 modelConnected.videoConstants modelConnected.rootNode newRoot
+                |> commitNewRootNode newRoot
+            , Cmd.none
             )
 
         RemoveNode path ->
             let
                 newRoot =
-                    removeNodeAtPath modelConnected.esp32.fonts path modelConnected.rootNode
+                    removeNodeAtPath modelConnected.esp32.fonts path (desiredRoot modelConnected.rootNode)
             in
             ( { modelConnected
                 | selectedPath =
@@ -447,8 +506,8 @@ updateConnected msgConnected modelConnected =
                     else
                         modelConnected.selectedPath
               }
-                |> syncRootNodeJson newRoot
-            , setRootNode modelConnected.esp32 modelConnected.videoConstants modelConnected.rootNode newRoot
+                |> commitNewRootNode newRoot
+            , Cmd.none
             )
 
         SetPreviewZoom zoom ->
@@ -459,16 +518,9 @@ updateConnected msgConnected modelConnected =
         SetRootNodeJsonText text ->
             case Decode.decodeString (Node.jsonDecoder modelConnected.esp32.fonts) text of
                 Ok parsed ->
-                    let
-                        json =
-                            encodeNodeJson parsed
-                    in
-                    ( { modelConnected
-                        | rootNode = parsed
-                        , rootNodeJsonText = json
-                        , rootNodeJsonError = Nothing
-                      }
-                    , setRootNode modelConnected.esp32 modelConnected.videoConstants modelConnected.rootNode parsed
+                    ( modelConnected
+                        |> commitNewRootNode parsed
+                    , Cmd.none
                     )
 
                 Err err ->
@@ -481,11 +533,113 @@ updateConnected msgConnected modelConnected =
 
         RestoreRootNodeJson ->
             ( { modelConnected
-                | rootNodeJsonText = encodeNodeJson modelConnected.rootNode
+                | rootNodeJsonText = encodeNodeJson (desiredRoot modelConnected.rootNode)
                 , rootNodeJsonError = Nothing
               }
             , Cmd.none
             )
+
+        DebounceFrame nowMs ->
+            case modelConnected.rootNode of
+                RootSynced _ ->
+                    ( modelConnected, Cmd.none )
+
+                RootDebouncing r ->
+                    case r.debounceStartedAtMs of
+                        Nothing ->
+                            ( { modelConnected
+                                | rootNode =
+                                    RootDebouncing
+                                        { ackedRoot = r.ackedRoot
+                                        , desiredRoot = r.desiredRoot
+                                        , debounceStartedAtMs = Just nowMs
+                                        }
+                              }
+                            , Cmd.none
+                            )
+
+                        Just startedAtMs ->
+                            if nowMs - startedAtMs < setRootNodeDebounceWaitMs then
+                                ( modelConnected, Cmd.none )
+
+                            else if r.ackedRoot.hash == r.desiredRoot.hash then
+                                ( { modelConnected | rootNode = RootSynced { root = r.desiredRoot } }
+                                , Cmd.none
+                                )
+
+                            else
+                                ( { modelConnected
+                                    | rootNode =
+                                        RootAwaitingAck
+                                            { ackedRoot = r.ackedRoot
+                                            , inFlightRoot = r.desiredRoot
+                                            }
+                                  }
+                                , setRootNode modelConnected.esp32 modelConnected.videoConstants r.ackedRoot r.desiredRoot
+                                )
+
+                RootAwaitingAck _ ->
+                    ( modelConnected, Cmd.none )
+
+                RootAwaitingAckWithPending r ->
+                    case r.debounceStartedAtMs of
+                        Nothing ->
+                            ( { modelConnected
+                                | rootNode =
+                                    RootAwaitingAckWithPending
+                                        { ackedRoot = r.ackedRoot
+                                        , inFlightRoot = r.inFlightRoot
+                                        , desiredRoot = r.desiredRoot
+                                        , debounceStartedAtMs = Just nowMs
+                                        }
+                              }
+                            , Cmd.none
+                            )
+
+                        Just startedAtMs ->
+                            -- Can't send while waiting for ACK; keep the debounce timer running.
+                            if nowMs - startedAtMs < setRootNodeDebounceWaitMs then
+                                ( modelConnected, Cmd.none )
+
+                            else
+                                ( modelConnected, Cmd.none )
+
+        CommandAcked ack ->
+            case ack.commandTag of
+                1 ->
+                    case modelConnected.rootNode of
+                        RootAwaitingAck { inFlightRoot } ->
+                            ( { modelConnected | rootNode = RootSynced { root = inFlightRoot } }
+                            , Cmd.none
+                            )
+
+                        RootAwaitingAckWithPending r ->
+                            let
+                                acked =
+                                    r.inFlightRoot
+                            in
+                            if r.desiredRoot.hash == acked.hash then
+                                ( { modelConnected | rootNode = RootSynced { root = r.desiredRoot } }
+                                , Cmd.none
+                                )
+
+                            else
+                                ( { modelConnected
+                                    | rootNode =
+                                        RootDebouncing
+                                            { ackedRoot = acked
+                                            , desiredRoot = r.desiredRoot
+                                            , debounceStartedAtMs = r.debounceStartedAtMs
+                                            }
+                                  }
+                                , Cmd.none
+                                )
+
+                        _ ->
+                            ( modelConnected, Cmd.none )
+
+                _ ->
+                    ( modelConnected, Cmd.none )
 
 
 setRootNode : ESP32 -> VideoConstants -> Node -> Node -> Cmd MsgConnected
@@ -804,7 +958,7 @@ viewTreeColumn model =
             , Html.Attributes.style "overflow" "auto"
             , Html.Attributes.style "padding" "0.25rem"
             ]
-            [ viewTreeNode model [] model.rootNode
+            [ viewTreeNode model [] (desiredRoot model.rootNode)
             ]
         ]
 
@@ -896,7 +1050,7 @@ viewAddChildButton : ModelConnected -> List Int -> Html Msg
 viewAddChildButton model path =
     let
         canAdd =
-            case getNodeAtPath path model.rootNode of
+            case getNodeAtPath path (desiredRoot model.rootNode) of
                 Just n ->
                     case n.type_ of
                         Node.Group _ ->
@@ -911,7 +1065,7 @@ viewAddChildButton model path =
     if canAdd then
         let
             insertIndex =
-                getNodeAtPath path model.rootNode
+                getNodeAtPath path (desiredRoot model.rootNode)
                     |> Maybe.andThen
                         (\n ->
                             case n.type_ of
@@ -997,7 +1151,7 @@ viewDetailsColumn model =
             , Html.Attributes.style "overflow" "auto"
             , Html.Attributes.style "padding" "0.5rem"
             ]
-            (case getNodeAtPath model.selectedPath model.rootNode of
+            (case getNodeAtPath model.selectedPath (desiredRoot model.rootNode) of
                 Just node ->
                     viewNodeDetails model node model.selectedPath
 
@@ -1219,31 +1373,6 @@ colorInput path key toType current =
         ]
 
 
-viewFontSelect : ModelConnected -> Html Msg
-viewFontSelect model =
-    Html.div [ Html.Attributes.style "margin-top" "0.5rem" ]
-        [ Html.label
-            [ Html.Attributes.style "margin-right" "0.5rem" ]
-            [ Html.text "Font" ]
-        , Html.select
-            [ Html.Events.onInput
-                (\s ->
-                    MsgConnected (SetFontIndex (Maybe.withDefault 0 (String.toInt s)))
-                )
-            ]
-            (model.esp32.fonts
-                |> List.indexedMap
-                    (\i font ->
-                        Html.option
-                            [ Html.Attributes.value (String.fromInt i)
-                            , Html.Attributes.Extra.attributeIf (i == model.fontIndex) (Html.Attributes.attribute "selected" "")
-                            ]
-                            [ Html.text (String.fromInt i ++ ": " ++ font.name) ]
-                    )
-            )
-        ]
-
-
 viewConnected : ModelConnected -> Html Msg
 viewConnected model =
     let
@@ -1280,7 +1409,7 @@ viewConnected model =
                 , Html.Attributes.style "min-height" "0"
                 , Html.Attributes.style "overflow" "auto"
                 ]
-                [ viewPreviewColumn vc model.previewZoom model.rootNode model.esp32.fonts ]
+                [ viewPreviewColumn vc model.previewZoom (desiredRoot model.rootNode) model.esp32.fonts ]
             ]
         , viewSidebarColumn model
         ]
@@ -1747,8 +1876,29 @@ subscriptions model =
             NotConnected _ ->
                 onConnectSuccessful_ ConnectSuccessful FailureOccurred
 
-            Connected _ ->
-                onDisconnectSuccessful (\() -> DisconnectSuccessful)
+            Connected modelConnected ->
+                Sub.batch
+                    [ onDisconnectSuccessful (\() -> DisconnectSuccessful)
+                    , onCommandAck (\payload -> MsgConnected (CommandAcked payload))
+                    , case modelConnected.rootNode of
+                        RootSynced _ ->
+                            Sub.none
+
+                        RootDebouncing _ ->
+                            onAnimationFrame
+                                (\posix ->
+                                    MsgConnected (DebounceFrame (Time.posixToMillis posix))
+                                )
+
+                        RootAwaitingAck _ ->
+                            Sub.none
+
+                        RootAwaitingAckWithPending _ ->
+                            onAnimationFrame
+                                (\posix ->
+                                    MsgConnected (DebounceFrame (Time.posixToMillis posix))
+                                )
+                    ]
         ]
 
 
