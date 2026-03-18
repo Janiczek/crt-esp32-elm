@@ -16,14 +16,15 @@ TODO:
 
 import Bitwise
 import Browser exposing (Document)
-import Browser.Events exposing (onAnimationFrame)
+import Browser.Events
 import Bytes exposing (Bytes)
 import Bytes.Decode
 import Bytes.Encode
+import Bytes.Extra
 import Color
 import Command
 import Dirty
-import ESP32 exposing (ESP32, VideoConstants, videoConstants)
+import ESP32 exposing (ESP32, VideoConstants)
 import Font exposing (Font)
 import Html exposing (Html)
 import Html.Attributes
@@ -379,7 +380,7 @@ update msg model =
         ConnectSuccessful esp32 ->
             let
                 videoConstants_ =
-                    videoConstants esp32
+                    ESP32.videoConstants esp32
 
                 node =
                     Node.empty
@@ -1885,7 +1886,7 @@ subscriptions model =
                             Sub.none
 
                         RootDebouncing _ ->
-                            onAnimationFrame
+                            Browser.Events.onAnimationFrame
                                 (\posix ->
                                     MsgConnected (DebounceFrame (Time.posixToMillis posix))
                                 )
@@ -1894,7 +1895,7 @@ subscriptions model =
                             Sub.none
 
                         RootAwaitingAckWithPending _ ->
-                            onAnimationFrame
+                            Browser.Events.onAnimationFrame
                                 (\posix ->
                                     MsgConnected (DebounceFrame (Time.posixToMillis posix))
                                 )

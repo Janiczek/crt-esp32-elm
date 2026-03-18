@@ -1,4 +1,3 @@
-
 const app = Elm.Main.init({
     node: document.getElementById('app'),
 })
@@ -42,21 +41,11 @@ function bytesToAsciiVisible(u8) {
     return out;
 }
 
-function logSerialRxBytes(u8) {
-    if (!u8 || u8.length === 0) return;
-    console.log(`[C->Elm] ${bytesToAsciiVisible(u8)}`);
-}
-
 async function trySendNextCommand() {
     if (isWaitingForAck || commandQueue.length === 0 || !writer) return;
     const item = commandQueue.shift();
     try {
-        console.log(
-            '[Elm->C] Sending command (length, bytes, needsAck):',
-            item.bytes.length,
-            Array.from(item.bytes),
-            item.needsAck
-        );
+        console.log(`[Elm->C] Sending command (${item.bytes.length} bytes)`);
         await writer.write(item.bytes);
     } catch (e) {
         complainNonFatal('Failed to send command: ' + e.message);
@@ -157,7 +146,6 @@ async function startContinuousRead() {
                 if (done) {
                     break;
                 }
-                logSerialRxBytes(value);
                 scanForAck(value);
                 appendToBuffer(value);
                 scheduleFlush();
@@ -173,7 +161,6 @@ async function startContinuousRead() {
             }
             if (buffer.length > 0) {
                 const text = decoder.decode(buffer);
-                console.log('Serial data:', text);
             }
             try {
                 reader.releaseLock();
@@ -185,7 +172,6 @@ async function startContinuousRead() {
 
 app.ports.connect.subscribe(async () => {
     try {
-        console.log("trying to connect");
         // init Web Serial
         webSerialPort = await navigator.serial.requestPort();
         await webSerialPort.open({ baudRate: 115200 });
@@ -263,7 +249,6 @@ function byteStream(reader) {
                 if (buf.length - offset < n) complainFatal('Stream ended unexpectedly');
                 return;
             }
-            logSerialRxBytes(value);
             if (offset >= buf.length) {
                 buf = value;
                 offset = 0;
