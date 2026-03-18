@@ -1,6 +1,6 @@
 port module Main exposing (Flags, Model, Msg, main)
 
-{-| A web app to connect to and control an ESP32 via Web Serial.
+{-| A web app to connect to and control an ESP32 over WiFi/WebSocket.
 
 The ESP32 is displaying VDOM scenes on a CRT display connected via the GPIO25
 DAC pin (NTSC greyscale 400x240 signal).
@@ -22,7 +22,6 @@ import Bytes.Decode
 import Bytes.Encode
 import Bytes.Extra
 import Color
-import Command
 import Dirty
 import ESP32 exposing (ESP32, VideoConstants)
 import Font exposing (Font)
@@ -35,6 +34,7 @@ import Json.Encode as Encode
 import List.Cartesian
 import List.Extra
 import Node exposing (Node, Type(..))
+import Set
 import Svg exposing (Svg)
 import Svg.Attributes
 import Time
@@ -49,8 +49,23 @@ type Model
     | Connected ModelConnected
 
 
+type alias LoadingProgress =
+    { expectedChunkCount : Int
+    , receivedChunkCount : Int
+    , expectedTotalBytes : Int
+    , receivedBytes : Int
+    }
+
+
+type alias InitialLoadStart =
+    { expectedChunkCount : Int
+    , expectedTotalBytes : Int
+    }
+
+
 type alias ModelNotConnected =
     { lastError : String
+    , loadingProgress : Maybe LoadingProgress
     }
 
 
@@ -124,6 +139,8 @@ type alias ModelConnected =
 
 type Msg
     = ConnectRequested
+    | InitialLoadStarted InitialLoadStart
+    | InitialLoadChunkReceived Int
     | ConnectSuccessful ESP32
     | DisconnectRequested
     | DisconnectSuccessful
@@ -140,13 +157,19 @@ type MsgConnected
     | SetRootNodeJsonText String
     | RestoreRootNodeJson
     | DebounceFrame Int
-    | CommandAcked { commandTag : Int }
+    | RootNodeAcked
 
 
 port connect : () -> Cmd msg
 
 
 port disconnect : () -> Cmd msg
+
+
+port onInitialLoadChunkCount : (InitialLoadStart -> msg) -> Sub msg
+
+
+port onInitialLoadChunkReceived : (Int -> msg) -> Sub msg
 
 
 port onConnectSuccessful : (Bytes -> msg) -> Sub msg
@@ -158,10 +181,10 @@ port onDisconnectSuccessful : (() -> msg) -> Sub msg
 port onFailure : (String -> msg) -> Sub msg
 
 
-port onCommandAck : ({ commandTag : Int } -> msg) -> Sub msg
+port onRootNodeAck : (() -> msg) -> Sub msg
 
 
-port sendCommand : ( Bytes, Bool ) -> Cmd msg
+port sendRootNode : Bytes -> Cmd msg
 
 
 insertAt : Int -> a -> List a -> List a
@@ -305,9 +328,16 @@ main =
         }
 
 
+emptyModelNotConnected : ModelNotConnected
+emptyModelNotConnected =
+    { lastError = ""
+    , loadingProgress = Nothing
+    }
+
+
 init : Flags -> ( Model, Cmd Msg )
 init () =
-    ( NotConnected { lastError = "" }
+    ( NotConnected emptyModelNotConnected
     , Cmd.none
     )
 
@@ -375,7 +405,75 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         ConnectRequested ->
-            ( model, connect () )
+            ( case model of
+                NotConnected nc ->
+                    NotConnected
+                        { nc
+                            | lastError = ""
+                            , loadingProgress = Nothing
+                        }
+
+                Connected _ ->
+                    model
+            , connect ()
+            )
+
+        InitialLoadStarted initialLoadStart ->
+            case model of
+                NotConnected nc ->
+                    let
+                        sanitizedChunkCount =
+                            max 0 initialLoadStart.expectedChunkCount
+
+                        sanitizedTotalBytes =
+                            max 0 initialLoadStart.expectedTotalBytes
+                    in
+                    ( NotConnected
+                        { nc
+                            | loadingProgress =
+                                if sanitizedChunkCount > 0 then
+                                    Just
+                                        { expectedChunkCount = sanitizedChunkCount
+                                        , receivedChunkCount = 0
+                                        , expectedTotalBytes = sanitizedTotalBytes
+                                        , receivedBytes = 0
+                                        }
+
+                                else
+                                    Nothing
+                        }
+                    , Cmd.none
+                    )
+
+                Connected _ ->
+                    ( model, Cmd.none )
+
+        InitialLoadChunkReceived chunkBytes ->
+            case model of
+                NotConnected nc ->
+                    let
+                        sanitizedChunkBytes =
+                            max 0 chunkBytes
+                    in
+                    ( NotConnected
+                        { nc
+                            | loadingProgress =
+                                nc.loadingProgress
+                                    |> Maybe.map
+                                        (\progress ->
+                                            { progress
+                                                | receivedChunkCount =
+                                                    min progress.expectedChunkCount (progress.receivedChunkCount + 1)
+                                                , receivedBytes =
+                                                    min progress.expectedTotalBytes (progress.receivedBytes + sanitizedChunkBytes)
+                                            }
+                                        )
+                        }
+                    , Cmd.none
+                    )
+
+                Connected _ ->
+                    ( model, Cmd.none )
 
         ConnectSuccessful esp32 ->
             let
@@ -405,14 +503,20 @@ update msg model =
             ( model, disconnect () )
 
         DisconnectSuccessful ->
-            ( NotConnected { lastError = "" }
+            ( NotConnected emptyModelNotConnected
             , Cmd.none
             )
 
         FailureOccurred error ->
             case model of
                 NotConnected nc ->
-                    ( NotConnected { nc | lastError = error }, Cmd.none )
+                    ( NotConnected
+                        { nc
+                            | lastError = error
+                            , loadingProgress = Nothing
+                        }
+                    , Cmd.none
+                    )
 
                 Connected c ->
                     ( Connected { c | lastError = error }, Cmd.none )
@@ -605,39 +709,34 @@ updateConnected msgConnected modelConnected =
                             else
                                 ( modelConnected, Cmd.none )
 
-        CommandAcked ack ->
-            case ack.commandTag of
-                1 ->
-                    case modelConnected.rootNode of
-                        RootAwaitingAck { inFlightRoot } ->
-                            ( { modelConnected | rootNode = RootSynced { root = inFlightRoot } }
-                            , Cmd.none
-                            )
+        RootNodeAcked ->
+            case modelConnected.rootNode of
+                RootAwaitingAck { inFlightRoot } ->
+                    ( { modelConnected | rootNode = RootSynced { root = inFlightRoot } }
+                    , Cmd.none
+                    )
 
-                        RootAwaitingAckWithPending r ->
-                            let
-                                acked =
-                                    r.inFlightRoot
-                            in
-                            if r.desiredRoot.hash == acked.hash then
-                                ( { modelConnected | rootNode = RootSynced { root = r.desiredRoot } }
-                                , Cmd.none
-                                )
+                RootAwaitingAckWithPending r ->
+                    let
+                        acked =
+                            r.inFlightRoot
+                    in
+                    if r.desiredRoot.hash == acked.hash then
+                        ( { modelConnected | rootNode = RootSynced { root = r.desiredRoot } }
+                        , Cmd.none
+                        )
 
-                            else
-                                ( { modelConnected
-                                    | rootNode =
-                                        RootDebouncing
-                                            { ackedRoot = acked
-                                            , desiredRoot = r.desiredRoot
-                                            , debounceStartedAtMs = r.debounceStartedAtMs
-                                            }
-                                  }
-                                , Cmd.none
-                                )
-
-                        _ ->
-                            ( modelConnected, Cmd.none )
+                    else
+                        ( { modelConnected
+                            | rootNode =
+                                RootDebouncing
+                                    { ackedRoot = acked
+                                    , desiredRoot = r.desiredRoot
+                                    , debounceStartedAtMs = r.debounceStartedAtMs
+                                    }
+                          }
+                        , Cmd.none
+                        )
 
                 _ ->
                     ( modelConnected, Cmd.none )
@@ -650,22 +749,27 @@ setRootNode esp32 videoConstants previousNode node =
 
     else
         let
-            command =
-                Command.SetRootNode node
-                    (Dirty.diff
-                        { tileSize = esp32.tileSize
-                        , tileCols = videoConstants.tileCols
-                        , tileRows = videoConstants.tileRows
-                        }
-                        esp32.fonts
-                        previousNode
-                        node
-                    )
+            dirtyTiles =
+                Dirty.diff
+                    { tileSize = esp32.tileSize
+                    , tileCols = videoConstants.tileCols
+                    , tileRows = videoConstants.tileRows
+                    }
+                    esp32.fonts
+                    previousNode
+                    node
+
+            _ =
+                Debug.log "sending dirty tiles" (Set.size dirtyTiles)
 
             bytes =
-                Command.encoder command |> Bytes.Encode.encode
+                Bytes.Encode.sequence
+                    [ Node.encoder node
+                    , Dirty.dirtyTilesEncoder dirtyTiles
+                    ]
+                    |> Bytes.Encode.encode
         in
-        sendCommand ( bytes, Command.needsAck command )
+        sendRootNode bytes
 
 
 view : Model -> Document Msg
@@ -693,17 +797,91 @@ viewNotConnected model =
         , Html.Attributes.style "height" "100vh"
         , Html.Attributes.style "padding" "0.5rem"
         ]
-        [ Html.div
-            [ Html.Attributes.style "display" "flex"
-            , Html.Attributes.style "align-items" "center"
-            , Html.Attributes.style "gap" "0.5rem"
-            , Html.Attributes.style "margin-bottom" "0.5rem"
+        (List.concat
+            [ [ Html.div
+                    [ Html.Attributes.style "display" "flex"
+                    , Html.Attributes.style "align-items" "center"
+                    , Html.Attributes.style "gap" "0.5rem"
+                    , Html.Attributes.style "margin-bottom" "0.5rem"
+                    ]
+                    [ Html.text "Not connected."
+                    , Html.button
+                        [ Html.Events.onClick ConnectRequested ]
+                        [ Html.text "Connect" ]
+                    , viewLastError model.lastError
+                    ]
+              ]
+            , case model.loadingProgress of
+                Just progress ->
+                    [ viewInitialLoadProgress progress ]
+
+                Nothing ->
+                    []
             ]
-            [ Html.text "Not connected."
-            , Html.button
-                [ Html.Events.onClick ConnectRequested ]
-                [ Html.text "Connect" ]
-            , viewLastError model.lastError
+        )
+
+
+viewInitialLoadProgress : LoadingProgress -> Html Msg
+viewInitialLoadProgress progress =
+    let
+        widthPercent =
+            if progress.expectedChunkCount <= 0 then
+                "0%"
+
+            else
+                String.fromFloat
+                    (100
+                        * toFloat progress.receivedChunkCount
+                        / toFloat progress.expectedChunkCount
+                    )
+                    ++ "%"
+
+        kilobytesText bytes =
+            let
+                tenths =
+                    round ((toFloat bytes * 10) / 1024)
+
+                whole =
+                    tenths // 10
+
+                fractional =
+                    modBy 10 tenths
+            in
+            String.fromInt whole ++ "." ++ String.fromInt fractional ++ " KB"
+    in
+    Html.div
+        [ Html.Attributes.style "display" "flex"
+        , Html.Attributes.style "flex-direction" "column"
+        , Html.Attributes.style "gap" "0.35rem"
+        , Html.Attributes.style "max-width" "20rem"
+        ]
+        [ Html.div []
+            [ Html.text
+                ("Loading ESP32 data: "
+                    ++ String.fromInt progress.receivedChunkCount
+                    ++ " / "
+                    ++ String.fromInt progress.expectedChunkCount
+                    ++ " chunks"
+                )
+            ]
+        , Html.div []
+            [ Html.text
+                (kilobytesText progress.receivedBytes
+                    ++ " / "
+                    ++ kilobytesText progress.expectedTotalBytes
+                )
+            ]
+        , Html.div
+            [ Html.Attributes.style "height" "0.75rem"
+            , Html.Attributes.style "background" "#222"
+            , Html.Attributes.style "border" "1px solid #555"
+            ]
+            [ Html.div
+                [ Html.Attributes.style "height" "100%"
+                , Html.Attributes.style "width" widthPercent
+                , Html.Attributes.style "background" "#7bd88f"
+                ]
+                []
             ]
         ]
 
@@ -1875,12 +2053,16 @@ subscriptions model =
         [ onFailure FailureOccurred
         , case model of
             NotConnected _ ->
-                onConnectSuccessful_ ConnectSuccessful FailureOccurred
+                Sub.batch
+                    [ onInitialLoadChunkCount InitialLoadStarted
+                    , onInitialLoadChunkReceived InitialLoadChunkReceived
+                    , onConnectSuccessful_ ConnectSuccessful FailureOccurred
+                    ]
 
             Connected modelConnected ->
                 Sub.batch
                     [ onDisconnectSuccessful (\() -> DisconnectSuccessful)
-                    , onCommandAck (\payload -> MsgConnected (CommandAcked payload))
+                    , onRootNodeAck (\() -> MsgConnected RootNodeAcked)
                     , case modelConnected.rootNode of
                         RootSynced _ ->
                             Sub.none

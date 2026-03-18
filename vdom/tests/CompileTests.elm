@@ -3,7 +3,6 @@ module CompileTests exposing (suite)
 import BoundingBox
 import BytesExtraExtra
 import Color
-import Command
 import Dirty
 import ESP32
 import Expect
@@ -36,13 +35,6 @@ suite =
                 let
                     _ =
                         Color.black
-                in
-                Expect.pass
-        , Test.test "Command" <|
-            \() ->
-                let
-                    _ =
-                        Command.encoder
                 in
                 Expect.pass
         , Test.test "Dirty" <|

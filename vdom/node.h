@@ -9,7 +9,7 @@
 #include "font.h"
 #include "serial.h"
 
-#define MAX_TOTAL_NODES 256
+#define MAX_TOTAL_NODES 64
 #define NODE_GROUP_MAX_CHILDREN 32
 
 typedef enum {

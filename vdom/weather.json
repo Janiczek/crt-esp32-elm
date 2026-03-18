@@ -1,0 +1,239 @@
+{
+  "type": "Group",
+  "key": "weather-demo-scene",
+  "children": [
+    {
+      "type": "Text",
+      "key": "title",
+      "x": 145,
+      "y": 22,
+      "text": "Weather demo",
+      "fontIndex": 17,
+      "color": 255
+    },
+
+    {
+      "type": "RectFill",
+      "key": "bar-00",
+      "x": 44,
+      "y": 81,
+      "w": 36,
+      "h": 85,
+      "color": 159
+    },
+    {
+      "type": "Text",
+      "key": "temp-00",
+      "x": 50,
+      "y": 150,
+      "text": "14.C",
+      "fontIndex": 17,
+      "color": 0
+    },
+    {
+      "type": "Text",
+      "key": "time-00",
+      "x": 47,
+      "y": 168,
+      "text": "00:00",
+      "fontIndex": 17,
+      "color": 255
+    },
+
+    {
+      "type": "RectFill",
+      "key": "bar-01",
+      "x": 82,
+      "y": 49,
+      "w": 36,
+      "h": 117,
+      "color": 223
+    },
+    {
+      "type": "Text",
+      "key": "temp-01",
+      "x": 88,
+      "y": 150,
+      "text": "27.C",
+      "fontIndex": 17,
+      "color": 0
+    },
+    {
+      "type": "Text",
+      "key": "time-01",
+      "x": 85,
+      "y": 168,
+      "text": "01:00",
+      "fontIndex": 17,
+      "color": 255
+    },
+
+    {
+      "type": "RectFill",
+      "key": "bar-02",
+      "x": 120,
+      "y": 62,
+      "w": 36,
+      "h": 104,
+      "color": 191
+    },
+    {
+      "type": "Text",
+      "key": "temp-02",
+      "x": 126,
+      "y": 150,
+      "text": "22.C",
+      "fontIndex": 17,
+      "color": 0
+    },
+    {
+      "type": "Text",
+      "key": "time-02",
+      "x": 123,
+      "y": 168,
+      "text": "02:00",
+      "fontIndex": 17,
+      "color": 255
+    },
+
+    {
+      "type": "RectFill",
+      "key": "bar-03",
+      "x": 158,
+      "y": 92,
+      "w": 36,
+      "h": 74,
+      "color": 127
+    },
+    {
+      "type": "Text",
+      "key": "temp-03",
+      "x": 164,
+      "y": 150,
+      "text": "11.C",
+      "fontIndex": 17,
+      "color": 0
+    },
+    {
+      "type": "Text",
+      "key": "time-03",
+      "x": 161,
+      "y": 168,
+      "text": "03:00",
+      "fontIndex": 17,
+      "color": 255
+    },
+
+    {
+      "type": "RectFill",
+      "key": "bar-04",
+      "x": 196,
+      "y": 51,
+      "w": 36,
+      "h": 115,
+      "color": 223
+    },
+    {
+      "type": "Text",
+      "key": "temp-04",
+      "x": 202,
+      "y": 150,
+      "text": "26.C",
+      "fontIndex": 17,
+      "color": 0
+    },
+    {
+      "type": "Text",
+      "key": "time-04",
+      "x": 199,
+      "y": 168,
+      "text": "04:00",
+      "fontIndex": 17,
+      "color": 255
+    },
+
+    {
+      "type": "RectFill",
+      "key": "bar-05",
+      "x": 234,
+      "y": 90,
+      "w": 36,
+      "h": 76,
+      "color": 159
+    },
+    {
+      "type": "Text",
+      "key": "temp-05",
+      "x": 240,
+      "y": 150,
+      "text": "11.C",
+      "fontIndex": 17,
+      "color": 0
+    },
+    {
+      "type": "Text",
+      "key": "time-05",
+      "x": 237,
+      "y": 168,
+      "text": "05:00",
+      "fontIndex": 17,
+      "color": 255
+    },
+
+    {
+      "type": "RectFill",
+      "key": "bar-06",
+      "x": 272,
+      "y": 36,
+      "w": 36,
+      "h": 130,
+      "color": 255
+    },
+    {
+      "type": "Text",
+      "key": "temp-06",
+      "x": 278,
+      "y": 150,
+      "text": "32.C",
+      "fontIndex": 17,
+      "color": 0
+    },
+    {
+      "type": "Text",
+      "key": "time-06",
+      "x": 275,
+      "y": 168,
+      "text": "06:00",
+      "fontIndex": 17,
+      "color": 255
+    },
+
+    {
+      "type": "RectFill",
+      "key": "bar-07",
+      "x": 310,
+      "y": 68,
+      "w": 36,
+      "h": 98,
+      "color": 191
+    },
+    {
+      "type": "Text",
+      "key": "temp-07",
+      "x": 316,
+      "y": 150,
+      "text": "19.C",
+      "fontIndex": 17,
+      "color": 0
+    },
+    {
+      "type": "Text",
+      "key": "time-07",
+      "x": 313,
+      "y": 168,
+      "text": "07:00",
+      "fontIndex": 17,
+      "color": 255
+    }
+  ]
+}

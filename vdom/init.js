@@ -2,313 +2,684 @@ const app = Elm.Main.init({
     node: document.getElementById('app'),
 })
 
+const SERIAL_BAUD_RATE = 115200
+const SERIAL_BUFFER_SIZE = 65536
+const PROTOCOL_VERSION = 1
+
+const TRANSPORT_OPCODES = {
+    BINARY: 0x2,
+    CLOSE: 0x8,
+    PING: 0x9,
+    PONG: 0xA,
+}
+
+const FRAME_TYPES = {
+    GET_ESP32_DATA: 0x01,
+    ESP32_DATA_BEGIN: 0x02,
+    SET_ROOT_NODE: 0x03,
+    ACK: 0x04,
+    LOG: 0x05,
+    ERROR: 0x06,
+    ESP32_DATA_CHUNK: 0x07,
+    ESP32_DATA_END: 0x08,
+}
+
+const VALID_FRAME_TYPES = new Set(Object.values(FRAME_TYPES))
+const VALID_TRANSPORT_START_BYTES = new Set([
+    0x80 | TRANSPORT_OPCODES.BINARY,
+    0x80 | TRANSPORT_OPCODES.CLOSE,
+    0x80 | TRANSPORT_OPCODES.PING,
+    0x80 | TRANSPORT_OPCODES.PONG,
+])
+
+const textDecoder = new TextDecoder()
+
+function transportOpcodeName(opcode) {
+    switch (opcode) {
+        case TRANSPORT_OPCODES.BINARY:
+            return 'BINARY'
+        case TRANSPORT_OPCODES.CLOSE:
+            return 'CLOSE'
+        case TRANSPORT_OPCODES.PING:
+            return 'PING'
+        case TRANSPORT_OPCODES.PONG:
+            return 'PONG'
+        default:
+            return `UNKNOWN(${opcode})`
+    }
+}
+
+function frameTypeName(frameType) {
+    for (const [name, value] of Object.entries(FRAME_TYPES)) {
+        if (value === frameType) {
+            return name
+        }
+    }
+    return `UNKNOWN(${frameType})`
+}
+
+function debugSerial(message, details) {
+    if (details === undefined) {
+        console.log('[Serial]', message)
+        return
+    }
+    console.log('[Serial]', message, details)
+}
+
+let serialPort = null
+let serialReader = null
+let serialWriter = null
+let readLoopPromise = null
+let transportReadBuffer = new Uint8Array(0)
+let pendingLogText = ''
+let isWaitingForAck = false
+let explicitDisconnectRequested = false
+let hasCompletedHandshake = false
+let pendingCloseReason = null
+let pendingEsp32Data = null
+
 function complainNonFatal(message) {
     app.ports.onFailure.send(message);
     console.error(message);
 }
 
-function complainFatal(message) {
-    alert(message);
-    app.ports.onFailure.send(message);
-    throw new Error(message);
+function resetProtocolState() {
+    debugSerial('[JS] resetting protocol state')
+    isWaitingForAck = false
+    hasCompletedHandshake = false
+    pendingCloseReason = null
+    pendingEsp32Data = null
+    transportReadBuffer = new Uint8Array(0)
+    pendingLogText = ''
 }
 
-if (!('serial' in navigator)) {
-    complainFatal('Web Serial is not supported in this browser.');
+function parseUint16Le(bytes, offset) {
+    return bytes[offset] | (bytes[offset + 1] << 8)
 }
 
-let webSerialPort;
-let writer;
-let reader;
+function parseUint32Le(bytes, offset) {
+    return (
+        bytes[offset] |
+        (bytes[offset + 1] << 8) |
+        (bytes[offset + 2] << 16) |
+        (bytes[offset + 3] << 24)
+    ) >>> 0
+}
 
-const ACK_SEQUENCE = [0xFF, 0xEE, 0xFF, 0xEE];
-
-let commandQueue = [];
-let isWaitingForAck = false;
-let lastSentCommandTag = null;
-
-function bytesToAsciiVisible(u8) {
-    let out = '';
-    for (let i = 0; i < u8.length; i++) {
-        const b = u8[i];
-        if (b === 0x0a) out += '\n';
-        else if (b === 0x0d) out += '\r';
-        else if (b === 0x09) out += '\t';
-        else if (b === 0x00) out += '\\0';
-        else if (b >= 0x20 && b <= 0x7e) out += String.fromCharCode(b);
-        else out += '\\x' + (b < 16 ? '0' : '') + b.toString(16);
+function beginEsp32DataHandshake(payload) {
+    if (hasCompletedHandshake) {
+        throw new Error('Received duplicate ESP32 data handshake')
     }
-    return out;
+    if (pendingEsp32Data !== null) {
+        throw new Error('Received nested ESP32 data handshake')
+    }
+    if (payload.length !== 4 && payload.length !== 6) {
+        throw new Error('Invalid ESP32 data begin payload')
+    }
+
+    const totalBytes = parseUint32Le(payload, 0)
+    const expectedChunkCount = payload.length >= 6 ? parseUint16Le(payload, 4) : null
+
+    pendingEsp32Data = {
+        expectedTotalBytes: totalBytes,
+        expectedChunkCount,
+        chunks: [],
+        receivedBytes: 0,
+        receivedChunkCount: 0,
+    }
+
+    if (expectedChunkCount !== null) {
+        app.ports.onInitialLoadChunkCount.send({
+            expectedChunkCount,
+            expectedTotalBytes: totalBytes,
+        })
+    }
+
+    debugSerial('[JS reader] ESP32_DATA begin', {
+        totalBytes,
+        expectedChunkCount,
+    })
 }
 
-async function trySendNextCommand() {
-    if (isWaitingForAck || commandQueue.length === 0 || !writer) return;
-    const item = commandQueue.shift();
-    try {
-        console.log(`[Elm->C] Sending command (${item.bytes.length} bytes)`);
-        await writer.write(item.bytes);
-    } catch (e) {
-        complainNonFatal('Failed to send command: ' + e.message);
-        return;
+function appendEsp32DataChunk(payload) {
+    if (pendingEsp32Data === null) {
+        throw new Error('Received ESP32 data chunk before begin')
     }
-    if (item.needsAck) {
-        isWaitingForAck = true;
+
+    pendingEsp32Data.receivedBytes += payload.length
+    pendingEsp32Data.receivedChunkCount += 1
+
+    if (pendingEsp32Data.receivedBytes > pendingEsp32Data.expectedTotalBytes) {
+        throw new Error('Received too much ESP32 data')
+    }
+
+    pendingEsp32Data.chunks.push(payload.slice())
+    app.ports.onInitialLoadChunkReceived.send(payload.length)
+
+    debugSerial('[JS reader] ESP32_DATA chunk', {
+        chunkBytes: payload.length,
+        receivedBytes: pendingEsp32Data.receivedBytes,
+        expectedTotalBytes: pendingEsp32Data.expectedTotalBytes,
+        receivedChunkCount: pendingEsp32Data.receivedChunkCount,
+        expectedChunkCount: pendingEsp32Data.expectedChunkCount,
+    })
+}
+
+function finishEsp32DataHandshake() {
+    if (pendingEsp32Data === null) {
+        throw new Error('Received ESP32 data end before begin')
+    }
+
+    if (pendingEsp32Data.receivedBytes !== pendingEsp32Data.expectedTotalBytes) {
+        throw new Error('Incomplete ESP32 data payload')
+    }
+
+    if (
+        pendingEsp32Data.expectedChunkCount !== null &&
+        pendingEsp32Data.receivedChunkCount !== pendingEsp32Data.expectedChunkCount
+    ) {
+        throw new Error('ESP32 data chunk count mismatch')
+    }
+
+    const payload = new Uint8Array(pendingEsp32Data.expectedTotalBytes)
+    let offset = 0
+    for (const chunk of pendingEsp32Data.chunks) {
+        payload.set(chunk, offset)
+        offset += chunk.length
+    }
+
+    pendingEsp32Data = null
+    hasCompletedHandshake = true
+    debugSerial('[JS reader] ESP32_DATA complete', {
+        totalBytes: payload.length,
+    })
+    app.ports.onConnectSuccessful.send(new DataView(payload.buffer))
+}
+
+function makeFrame(frameType, payload) {
+    const frame = new Uint8Array(2 + payload.length)
+    frame[0] = frameType
+    frame[1] = PROTOCOL_VERSION
+    frame.set(payload, 2)
+    return frame
+}
+
+function makeTransportFrame(opcode, payload) {
+    if (payload.length > 0xffff) {
+        throw new Error('Transport payload too large')
+    }
+
+    const header = payload.length <= 125 ? new Uint8Array(2) : new Uint8Array(4)
+    header[0] = 0x80 | (opcode & 0x0f)
+    if (payload.length <= 125) {
+        header[1] = payload.length
     } else {
-        trySendNextCommand();
+        header[1] = 126
+        header[2] = (payload.length >> 8) & 0xff
+        header[3] = payload.length & 0xff
     }
+
+    const frame = new Uint8Array(header.length + payload.length)
+    frame.set(header, 0)
+    frame.set(payload, header.length)
+    return frame
 }
 
-// Rate-limit adding new commands to the queue to ~60fps.
-// We batch all commands received within a frame and enqueue them together.
-let pendingCommands = [];
-let flushPendingScheduled = false;
-let flushPendingHandle = null;
-const hasRAF = typeof requestAnimationFrame === 'function' && typeof cancelAnimationFrame === 'function';
-const scheduleNextFrame = hasRAF ? requestAnimationFrame : (cb) => setTimeout(cb, 16);
-const cancelNextFrame = hasRAF ? cancelAnimationFrame : (id) => clearTimeout(id);
+function appendBytes(left, right) {
+    if (left.length === 0) {
+        return right.slice()
+    }
+    if (right.length === 0) {
+        return left.slice()
+    }
 
-function enqueueCommandAtMostOncePerFrame(bytesView, needsAck) {
-    pendingCommands.push({ bytes: bytesView, needsAck });
-    if (flushPendingScheduled) return;
-    flushPendingScheduled = true;
-    flushPendingHandle = scheduleNextFrame(() => {
-        flushPendingScheduled = false;
-        flushPendingHandle = null;
-        if (pendingCommands.length === 0) return;
-        for (let i = 0; i < pendingCommands.length; i++) {
-            commandQueue.push(pendingCommands[i]);
+    const combined = new Uint8Array(left.length + right.length)
+    combined.set(left, 0)
+    combined.set(right, left.length)
+    return combined
+}
+
+function decodeText(payload) {
+    return textDecoder.decode(payload);
+}
+
+function logNoiseBytes(bytes, forceFlush = false) {
+    if (bytes.length > 0) {
+        pendingLogText += textDecoder.decode(bytes, { stream: !forceFlush })
+    }
+
+    let newlineIndex = pendingLogText.indexOf('\n')
+    while (newlineIndex >= 0) {
+        const line = pendingLogText.slice(0, newlineIndex).replace(/\r$/, '').trim()
+        if (line.length > 0) {
+            console.log('[ESP32]', line)
         }
-        pendingCommands = [];
-        trySendNextCommand();
-    });
-}
-
-async function startContinuousRead() {
-    if (!webSerialPort || !webSerialPort.readable) {
-        return;
+        pendingLogText = pendingLogText.slice(newlineIndex + 1)
+        newlineIndex = pendingLogText.indexOf('\n')
     }
 
-    // Acquire a reader dedicated to logging incoming data
-    reader = webSerialPort.readable.getReader();
+    if (forceFlush) {
+        const tail = pendingLogText.trim()
+        if (tail.length > 0) {
+            console.log('[ESP32]', tail)
+        }
+        pendingLogText = ''
+    }
+}
 
-    (async () => {
-        const TIMEOUT_MS = 20;
-        let buffer = new Uint8Array(0);
-        let flushTimeoutId = null;
-        const decoder = new TextDecoder();
-        let ackMatched = 0;
+function isKnownAppFrameType(frameType) {
+    return VALID_FRAME_TYPES.has(frameType)
+}
 
-        const scanForAck = (chunk) => {
-            for (let i = 0; i < chunk.length; i++) {
-                if (chunk[i] === ACK_SEQUENCE[ackMatched]) {
-                    ackMatched++;
-                    if (ackMatched === ACK_SEQUENCE.length) {
-                        ackMatched = 0;
-                        isWaitingForAck = false;
-                        const ackTag = lastSentCommandTag == null ? 0 : lastSentCommandTag;
-                        lastSentCommandTag = null;
-                        try {
-                            app.ports.onCommandAck.send({ commandTag: ackTag });
-                        } catch (_) {}
-                    }
-                } else {
-                    ackMatched = chunk[i] === ACK_SEQUENCE[0] ? 1 : 0;
-                }
-            }
-        };
+function isValidBinaryPayload(payload) {
+    return payload.length >= 2 && payload[1] === PROTOCOL_VERSION && isKnownAppFrameType(payload[0])
+}
 
-        const scheduleFlush = () => {
-            if (flushTimeoutId !== null) {
-                clearTimeout(flushTimeoutId);
-            }
-            flushTimeoutId = setTimeout(() => {
-                if (buffer.length > 0) {
-                    const text = decoder.decode(buffer);
-                    buffer = new Uint8Array(0);
-                }
-                flushTimeoutId = null;
-            }, TIMEOUT_MS);
-        };
+function findTransportFrameStart(buffer) {
+    for (let i = 0; i < buffer.length; i += 1) {
+        if (VALID_TRANSPORT_START_BYTES.has(buffer[i])) {
+            return i
+        }
+    }
+    return -1
+}
 
-        const appendToBuffer = (chunk) => {
-            if (!chunk || chunk.length === 0) {
-                return;
-            }
-            const combined = new Uint8Array(buffer.length + chunk.length);
-            combined.set(buffer, 0);
-            combined.set(chunk, buffer.length);
-            buffer = combined;
-        };
+function tryParseTransportFrame(buffer) {
+    if (buffer.length < 2) {
+        return { status: 'need-more' }
+    }
+
+    const firstByte = buffer[0]
+    if ((firstByte & 0x80) === 0) {
+        return { status: 'invalid' }
+    }
+
+    const opcode = firstByte & 0x0f
+    if (
+        opcode !== TRANSPORT_OPCODES.BINARY &&
+        opcode !== TRANSPORT_OPCODES.CLOSE &&
+        opcode !== TRANSPORT_OPCODES.PING &&
+        opcode !== TRANSPORT_OPCODES.PONG
+    ) {
+        return { status: 'invalid' }
+    }
+
+    const masked = (buffer[1] & 0x80) !== 0
+    if (masked) {
+        return { status: 'invalid' }
+    }
+
+    let headerLength = 2
+    let payloadLength = buffer[1] & 0x7f
+
+    if (payloadLength === 126) {
+        if (buffer.length < 4) {
+            return { status: 'need-more' }
+        }
+        headerLength = 4
+        payloadLength = (buffer[2] << 8) | buffer[3]
+    } else if (payloadLength === 127) {
+        return { status: 'invalid' }
+    }
+
+    const totalLength = headerLength + payloadLength
+    if (buffer.length < totalLength) {
+        return { status: 'need-more' }
+    }
+
+    const payload = buffer.slice(headerLength, totalLength)
+    if (opcode === TRANSPORT_OPCODES.BINARY && !isValidBinaryPayload(payload)) {
+        return { status: 'invalid' }
+    }
+
+    return {
+        status: 'ok',
+        opcode,
+        payload,
+        totalLength,
+    }
+}
+
+function closeAndReportFailure(message) {
+    console.error('[Serial] closing transport after failure', message)
+    pendingCloseReason = message
+    if (serialPort) {
+        void disconnectTransportInternal()
+    } else {
+        complainNonFatal(message);
+        pendingCloseReason = null;
+    }
+}
+
+function handleIncomingFrame(data) {
+    const frame = data instanceof Uint8Array ? data : new Uint8Array(data)
+    if (frame.length < 2) {
+        throw new Error('Received short frame')
+    }
+
+    const frameType = frame[0];
+    const version = frame[1];
+    const payload = frame.subarray(2);
+
+    debugSerial('[JS reader] incoming app frame', {
+        frameType: frameTypeName(frameType),
+        payloadBytes: payload.length,
+    })
+
+    if (version !== PROTOCOL_VERSION) {
+        throw new Error(`Unsupported protocol version: ${version}`);
+    }
+
+    switch (frameType) {
+        case FRAME_TYPES.ESP32_DATA_BEGIN: {
+            beginEsp32DataHandshake(payload)
+            break;
+        }
+
+        case FRAME_TYPES.ESP32_DATA_CHUNK: {
+            appendEsp32DataChunk(payload)
+            break;
+        }
+
+        case FRAME_TYPES.ESP32_DATA_END: {
+            finishEsp32DataHandshake()
+            break;
+        }
+
+        case FRAME_TYPES.ACK: {
+            isWaitingForAck = false;
+            debugSerial('[JS reader] received ACK')
+            app.ports.onRootNodeAck.send(null);
+            break;
+        }
+
+        case FRAME_TYPES.LOG:
+            debugSerial('[JS reader] received LOG frame', { payloadBytes: payload.length })
+            console.log('[ESP32]', decodeText(payload));
+            break;
+
+        case FRAME_TYPES.ERROR:
+            console.error('[Serial] received ERROR frame', {
+                payloadBytes: payload.length,
+            })
+            complainNonFatal(payload.length > 0 ? decodeText(payload) : 'ESP32 reported an error');
+            break;
+
+        default:
+            throw new Error(`Unknown frame type: ${frameType}`);
+    }
+}
+
+async function writeTransportFrame(opcode, payload) {
+    if (!serialWriter) {
+        throw new Error('Serial writer not available')
+    }
+    debugSerial('[JS writer] writing transport frame', {
+        opcode: transportOpcodeName(opcode),
+        payloadBytes: payload.length,
+    })
+    await serialWriter.write(makeTransportFrame(opcode, payload))
+}
+
+async function sendAppFrame(frameType, payload) {
+    debugSerial('[JS writer] sending app frame', {
+        frameType: frameTypeName(frameType),
+        payloadBytes: payload.length,
+    })
+    await writeTransportFrame(TRANSPORT_OPCODES.BINARY, makeFrame(frameType, payload))
+}
+
+function processTransportReadBuffer() {
+    for (;;) {
+        if (transportReadBuffer.length === 0) {
+            return
+        }
+
+        const frameStart = findTransportFrameStart(transportReadBuffer)
+        if (frameStart < 0) {
+            logNoiseBytes(transportReadBuffer)
+            transportReadBuffer = new Uint8Array(0)
+            return
+        }
+
+        if (frameStart > 0) {
+            logNoiseBytes(transportReadBuffer.subarray(0, frameStart))
+            transportReadBuffer = transportReadBuffer.slice(frameStart)
+        }
+
+        const parsed = tryParseTransportFrame(transportReadBuffer)
+        if (parsed.status === 'need-more') {
+            return
+        }
+
+        if (parsed.status === 'invalid') {
+            logNoiseBytes(transportReadBuffer.subarray(0, 1))
+            transportReadBuffer = transportReadBuffer.slice(1)
+            continue
+        }
+
+        transportReadBuffer = transportReadBuffer.slice(parsed.totalLength)
 
         try {
-            while (true) {
-                const { value, done } = await reader.read();
-                if (done) {
-                    break;
-                }
-                scanForAck(value);
-                appendToBuffer(value);
-                scheduleFlush();
+            debugSerial('[JS reader] parsed transport frame', {
+                opcode: transportOpcodeName(parsed.opcode),
+                payloadBytes: parsed.payload.length,
+                bufferedBytesRemaining: transportReadBuffer.length,
+            })
+            switch (parsed.opcode) {
+                case TRANSPORT_OPCODES.BINARY:
+                    handleIncomingFrame(parsed.payload)
+                    break
+
+                case TRANSPORT_OPCODES.CLOSE:
+                    closeAndReportFailure('ESP32 closed the serial transport')
+                    return
+
+                case TRANSPORT_OPCODES.PING:
+                    void writeTransportFrame(TRANSPORT_OPCODES.PONG, parsed.payload)
+                    break
+
+                case TRANSPORT_OPCODES.PONG:
+                    break
+
+                default:
+                    throw new Error(`Unknown transport opcode: ${parsed.opcode}`)
             }
         } catch (e) {
-            if (e.name !== 'NetworkError') {
-                complainNonFatal('Failed during continuous serial read: ' + e.message);
-            }
-        } finally {
-            if (flushTimeoutId !== null) {
-                clearTimeout(flushTimeoutId);
-                flushTimeoutId = null;
-            }
-            if (buffer.length > 0) {
-                const text = decoder.decode(buffer);
-            }
-            try {
-                reader.releaseLock();
-            } catch (_) {}
-            reader = null;
+            closeAndReportFailure('Failed to handle ESP32 frame: ' + e.message)
+            return
         }
-    })();
+    }
 }
 
-app.ports.connect.subscribe(async () => {
+async function cleanupTransportState() {
+    const port = serialPort
+    const reader = serialReader
+    const writer = serialWriter
+
+    serialPort = null
+    serialReader = null
+    serialWriter = null
+    readLoopPromise = null
+
+    debugSerial('[JS] cleaning up transport state')
+
+    if (reader) {
+        try { await reader.cancel() } catch (_) { }
+        try { reader.releaseLock() } catch (_) { }
+    }
+
+    if (writer) {
+        try { writer.releaseLock() } catch (_) { }
+    }
+
+    if (port) {
+        try { await port.close() } catch (_) { }
+    }
+
+    logNoiseBytes(new Uint8Array(0), true)
+}
+
+function finalizeClosedTransport() {
+    const wasExplicit = explicitDisconnectRequested
+    const hadHandshake = hasCompletedHandshake
+    const closeReason = pendingCloseReason
+
+    resetProtocolState()
+    explicitDisconnectRequested = false
+
+    debugSerial('[JS] transport closed', {
+        wasExplicit,
+        hadHandshake,
+        closeReason,
+    })
+
+    if (wasExplicit) {
+        app.ports.onDisconnectSuccessful.send(null)
+        return
+    }
+
+    if (hadHandshake) {
+        app.ports.onDisconnectSuccessful.send(null)
+        complainNonFatal(closeReason || 'Serial transport disconnected')
+    } else {
+        complainNonFatal(closeReason || 'Failed to connect to ESP32 over serial')
+    }
+}
+
+async function disconnectTransportInternal() {
+    await cleanupTransportState()
+    finalizeClosedTransport()
+}
+
+async function startReadLoop(port) {
+    //debugSerial('[JS reader] starting read loop')
     try {
-        // init Web Serial
-        webSerialPort = await navigator.serial.requestPort();
-        await webSerialPort.open({ baudRate: 115200 });
-        writer = webSerialPort.writable.getWriter();
-        const initReader = webSerialPort.readable.getReader();
+        while (serialPort === port && serialReader) {
+            const { value, done } = await serialReader.read()
+            if (done) {
+                //debugSerial('[JS reader] read loop done')
+                break
+            }
+            if (!value || value.length === 0) {
+                continue
+            }
 
-        writer.write(new Uint8Array([0x00])); // 0x00 -> please send current ESP32 data
-
-        const esp32Data = await readEsp32Data(initReader);
-        const dataView = new DataView(esp32Data);
-        app.ports.onConnectSuccessful.send(dataView);
-
-        // After initial handshake, start logging all subsequent data
-        startContinuousRead();
+            // Too much logging:
+            // debugSerial('[JS reader] read bytes from serial', { chunkBytes: value.length })
+            transportReadBuffer = appendBytes(transportReadBuffer, value)
+            processTransportReadBuffer()
+        }
     } catch (e) {
-        complainNonFatal('Failed to connect: ' + e.message);
+        if (serialPort === port && !explicitDisconnectRequested) {
+            console.error('[Serial] read loop error', e)
+            pendingCloseReason = pendingCloseReason || ('Serial transport error: ' + e.message)
+        }
+    } finally {
+        if (serialPort === port) {
+            await cleanupTransportState()
+            finalizeClosedTransport()
+        }
     }
+}
+
+async function connectTransport() {
+    if (serialPort) {
+        complainNonFatal('Cannot connect: already connected')
+        return
+    }
+
+    if (!('serial' in navigator)) {
+        complainNonFatal('Web Serial is not available in this browser')
+        return
+    }
+
+    resetProtocolState()
+    explicitDisconnectRequested = false
+    //debugSerial('[JS] connect requested')
+
+    let port
+    try {
+        port = await navigator.serial.requestPort()
+        //debugSerial('[JS] serial port selected')
+    } catch (e) {
+        if (e.name !== 'NotFoundError') {
+            complainNonFatal('Failed to select serial port: ' + e.message)
+        }
+        return
+    }
+
+    try {
+        await port.open({
+            baudRate: SERIAL_BAUD_RATE,
+            bufferSize: SERIAL_BUFFER_SIZE,
+        })
+        //debugSerial('[JS] serial port opened', {
+        //    baudRate: SERIAL_BAUD_RATE,
+        //    bufferSize: SERIAL_BUFFER_SIZE,
+        //})
+    } catch (e) {
+        complainNonFatal('Failed to open serial port: ' + e.message)
+        return
+    }
+
+    try {
+        serialPort = port
+        serialReader = port.readable.getReader()
+        serialWriter = port.writable.getWriter()
+        readLoopPromise = startReadLoop(port)
+        await sendAppFrame(FRAME_TYPES.GET_ESP32_DATA, new Uint8Array(0))
+        debugSerial('[JS writer] GET_ESP32_DATA sent')
+    } catch (e) {
+        pendingCloseReason = 'Failed to request ESP32 data: ' + e.message
+        await disconnectTransportInternal()
+    }
+}
+
+async function disconnectTransport() {
+    if (!serialPort) {
+        resetProtocolState()
+        explicitDisconnectRequested = false
+        debugSerial('[JS] disconnect requested while already disconnected')
+        app.ports.onDisconnectSuccessful.send(null)
+        return
+    }
+
+    explicitDisconnectRequested = true
+    debugSerial('[JS] disconnect requested')
+
+    try { await writeTransportFrame(TRANSPORT_OPCODES.CLOSE, new Uint8Array(0)) } catch (_) { }
+
+    await disconnectTransportInternal()
+}
+
+app.ports.connect.subscribe(() => {
+    void connectTransport()
 })
 
-app.ports.disconnect.subscribe(async () => {
-    if (reader)        { try { await reader.cancel();       } catch (_) {} reader = null; }
-    if (writer)        { try { await writer.close();        } catch (_) {} writer = null; }
-    if (webSerialPort) { try { await webSerialPort.close(); } catch (_) {} webSerialPort = null; }
-    if (flushPendingHandle !== null) {
-        cancelNextFrame(flushPendingHandle);
-        flushPendingHandle = null;
-    }
-    flushPendingScheduled = false;
-    pendingCommands = [];
-    commandQueue = [];
-    isWaitingForAck = false;
-    lastSentCommandTag = null;
-    app.ports.onDisconnectSuccessful.send(null);
+app.ports.disconnect.subscribe(() => {
+    void disconnectTransport()
 })
 
-app.ports.sendCommand.subscribe(async ([commandBytes, needsAck]) => {
-    if (!writer) {
-        complainNonFatal('Cannot send command: not connected');
-        return;
+app.ports.sendRootNode.subscribe((commandBytes) => {
+    if (!serialPort || !serialWriter) {
+        complainNonFatal('Cannot send root node: not connected')
+        return
     }
 
     if (isWaitingForAck) {
-        complainNonFatal('Cannot send command: waiting for ACK');
+        complainNonFatal('Cannot send root node: waiting for ACK');
         return;
     }
 
     const bytes = new Uint8Array(commandBytes.buffer, commandBytes.byteOffset, commandBytes.byteLength);
-    const commandTag = bytes.length > 0 ? bytes[0] : 0;
 
-    try {
-        await writer.write(bytes);
-    } catch (e) {
-        complainNonFatal('Failed to send command: ' + e.message);
-        return;
-    }
+    isWaitingForAck = true
 
-    if (needsAck) {
-        isWaitingForAck = true;
-        lastSentCommandTag = commandTag;
-    }
+    void sendAppFrame(FRAME_TYPES.SET_ROOT_NODE, bytes)
+        .then(() => { })
+        .catch((e) => {
+            isWaitingForAck = false
+            complainNonFatal('Failed to send root node: ' + e.message)
+        })
 })
-
-function parseUint16LE(bytes) {
-    return bytes[0] | (bytes[1] << 8);
-}
-
-function byteStream(reader) {
-    let buf = new Uint8Array(0);
-    let offset = 0;
-
-    async function ensure(n) {
-        while (buf.length - offset < n) {
-            const { value, done } = await reader.read();
-            if (done) {
-                if (buf.length - offset < n) complainFatal('Stream ended unexpectedly');
-                return;
-            }
-            if (offset >= buf.length) {
-                buf = value;
-                offset = 0;
-            } else {
-                const keep = buf.subarray(offset);
-                buf = new Uint8Array(keep.length + value.length);
-                buf.set(keep);
-                buf.set(value, keep.length);
-                offset = 0;
-            }
-        }
-    }
-
-    return {
-        async readByte() {
-            await ensure(1);
-            if (offset >= buf.length) return null;
-            return buf[offset++];
-        },
-        async readBytes(n) {
-            await ensure(n);
-            const out = buf.slice(offset, offset + n);
-            offset += n;
-            return out;
-        },
-    };
-}
-
-const SEPARATOR = [0xff, 0x00, 0xff, 0x00];
-
-async function readEsp32Data(readerForInit) {
-    try {
-        const stream = byteStream(readerForInit);
-
-        let matched = 0;
-        while (matched < SEPARATOR.length) {
-            const b = await stream.readByte();
-            if (b === null) complainFatal('Stream ended before finding separator');
-            if (b === SEPARATOR[matched]) matched++;
-            else matched = b === SEPARATOR[0] ? 1 : 0;
-        }
-
-        const lengthBuf = await stream.readBytes(2);
-        const dataLength = parseUint16LE(lengthBuf);
-        console.log('[JS C->Elm] ESP32 data length',dataLength);
-
-        const dataBuf = await stream.readBytes(dataLength);
-
-        if (dataLength !== dataBuf.byteLength) {
-            complainFatal('ESP32 data length mismatch');
-        }
-
-        return dataBuf.buffer;
-    } catch (e) {
-        if (e.name !== 'NetworkError') {
-            complainNonFatal('Failed to read ESP32 data: ' + e.message);
-        }
-    } finally {
-        try {
-            readerForInit.releaseLock();
-        } catch (_) {}
-    }
-}
