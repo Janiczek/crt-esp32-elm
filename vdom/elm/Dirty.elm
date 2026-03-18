@@ -79,15 +79,12 @@ diff grid fonts oldRoot newRoot =
 
                         newBorder =
                             markRectBorder grid newRoot.bbox
-
-                        geometryChange =
-                            Set.union (Set.diff oldBorder newBorder) (Set.diff newBorder oldBorder)
                     in
-                    if geometryChange == Set.empty && oldRoot.bbox == newRoot.bbox then
+                    if oldRoot.bbox == newRoot.bbox then
                         newBorder
 
                     else
-                        geometryChange
+                        Set.union oldBorder newBorder
 
             ( Group g1, Group g2 ) ->
                 diffChildren grid fonts g1.children g2.children

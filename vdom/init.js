@@ -50,6 +50,12 @@ async function trySendNextCommand() {
     if (isWaitingForAck || commandQueue.length === 0 || !writer) return;
     const item = commandQueue.shift();
     try {
+        console.log(
+            '[Elm->C] Sending command (length, bytes, needsAck):',
+            item.bytes.length,
+            Array.from(item.bytes),
+            item.needsAck
+        );
         await writer.write(item.bytes);
     } catch (e) {
         complainNonFatal('Failed to send command: ' + e.message);
@@ -62,9 +68,29 @@ async function trySendNextCommand() {
     }
 }
 
-function enqueueCommand(bytesView, needsAck) {
-    commandQueue.push({ bytes: bytesView, needsAck });
-    trySendNextCommand();
+// Rate-limit adding new commands to the queue to ~60fps.
+// We batch all commands received within a frame and enqueue them together.
+let pendingCommands = [];
+let flushPendingScheduled = false;
+let flushPendingHandle = null;
+const hasRAF = typeof requestAnimationFrame === 'function' && typeof cancelAnimationFrame === 'function';
+const scheduleNextFrame = hasRAF ? requestAnimationFrame : (cb) => setTimeout(cb, 16);
+const cancelNextFrame = hasRAF ? cancelAnimationFrame : (id) => clearTimeout(id);
+
+function enqueueCommandAtMostOncePerFrame(bytesView, needsAck) {
+    pendingCommands.push({ bytes: bytesView, needsAck });
+    if (flushPendingScheduled) return;
+    flushPendingScheduled = true;
+    flushPendingHandle = scheduleNextFrame(() => {
+        flushPendingScheduled = false;
+        flushPendingHandle = null;
+        if (pendingCommands.length === 0) return;
+        for (let i = 0; i < pendingCommands.length; i++) {
+            commandQueue.push(pendingCommands[i]);
+        }
+        pendingCommands = [];
+        trySendNextCommand();
+    });
 }
 
 async function startContinuousRead() {
@@ -154,6 +180,7 @@ async function startContinuousRead() {
 
 app.ports.connect.subscribe(async () => {
     try {
+        console.log("trying to connect");
         // init Web Serial
         webSerialPort = await navigator.serial.requestPort();
         await webSerialPort.open({ baudRate: 115200 });
@@ -177,22 +204,27 @@ app.ports.disconnect.subscribe(async () => {
     if (reader)        { try { await reader.cancel();       } catch (_) {} reader = null; }
     if (writer)        { try { await writer.close();        } catch (_) {} writer = null; }
     if (webSerialPort) { try { await webSerialPort.close(); } catch (_) {} webSerialPort = null; }
+    if (flushPendingHandle !== null) {
+        cancelNextFrame(flushPendingHandle);
+        flushPendingHandle = null;
+    }
+    flushPendingScheduled = false;
+    pendingCommands = [];
     commandQueue = [];
     isWaitingForAck = false;
-    app.ports.onDisconnectSuccessful.send();
+    app.ports.onDisconnectSuccessful.send(null);
 })
 
 app.ports.sendCommand.subscribe(([commandBytes, needsAck]) => {
     try {
         const view = new Uint8Array(commandBytes.buffer, commandBytes.byteOffset, commandBytes.byteLength);
-        console.log('[Elm->C] Sending command (length, bytes, needsAck):', view.length, Array.from(view), needsAck);
     } catch (e) {
         console.error('Failed to inspect sendCommand bytes:', e);
     }
 
     if (writer) {
         const bytes = new Uint8Array(commandBytes.buffer, commandBytes.byteOffset, commandBytes.byteLength);
-        enqueueCommand(bytes, needsAck);
+        enqueueCommandAtMostOncePerFrame(bytes, needsAck);
     } else {
         complainNonFatal('Cannot send command: not connected');
     }

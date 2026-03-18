@@ -635,7 +635,7 @@ suite =
           in
           Test.describe "diff"
             [ Test.describe "Rect (outline) scenes"
-                [ Test.test "two rects sharing top-left, same color, second larger: dirty tiles are right and bottom only" <|
+                [ Test.test "two rects sharing top-left, same color, second larger: dirty tiles include both old and new borders" <|
                     \_ ->
                         let
                             color =
@@ -666,9 +666,74 @@ suite =
                                     }
 
                             expected =
-                                Set.diff
-                                    (Dirty.markRectBorder_TEST basicGrid largeBbox)
-                                    (Dirty.markRectBorder_TEST basicGrid smallBbox)
+                                Dirty.markRectBorder_TEST basicGrid smallBbox
+                                    |> Set.union (Dirty.markRectBorder_TEST basicGrid largeBbox)
+                        in
+                        Dirty.diff basicGrid [] oldRoot newRoot
+                            |> Expect.equal expected
+                , Test.test "same-color rect moved left across a tile boundary repaints both old and new border tiles" <|
+                    \_ ->
+                        let
+                            oldBbox =
+                                { x = 8, y = 0, w = 8, h = 8 }
+
+                            newBbox =
+                                { x = 7, y = 0, w = 8, h = 8 }
+
+                            oldRoot =
+                                Node.rect "r"
+                                    { x = oldBbox.x
+                                    , y = oldBbox.y
+                                    , w = oldBbox.w
+                                    , h = oldBbox.h
+                                    , color = Color.black
+                                    }
+
+                            newRoot =
+                                Node.rect "r"
+                                    { x = newBbox.x
+                                    , y = newBbox.y
+                                    , w = newBbox.w
+                                    , h = newBbox.h
+                                    , color = Color.black
+                                    }
+
+                            expected =
+                                Dirty.markRectBorder_TEST basicGrid oldBbox
+                                    |> Set.union (Dirty.markRectBorder_TEST basicGrid newBbox)
+                        in
+                        Dirty.diff basicGrid [] oldRoot newRoot
+                            |> Expect.equal expected
+                , Test.test "same-color rect geometry change within the same tile ring still repaints all touched tiles" <|
+                    \_ ->
+                        let
+                            oldBbox =
+                                { x = 10, y = 10, w = 14, h = 14 }
+
+                            newBbox =
+                                { x = 9, y = 10, w = 15, h = 14 }
+
+                            oldRoot =
+                                Node.rect "r"
+                                    { x = oldBbox.x
+                                    , y = oldBbox.y
+                                    , w = oldBbox.w
+                                    , h = oldBbox.h
+                                    , color = Color.black
+                                    }
+
+                            newRoot =
+                                Node.rect "r"
+                                    { x = newBbox.x
+                                    , y = newBbox.y
+                                    , w = newBbox.w
+                                    , h = newBbox.h
+                                    , color = Color.black
+                                    }
+
+                            expected =
+                                Dirty.markRectBorder_TEST basicGrid oldBbox
+                                    |> Set.union (Dirty.markRectBorder_TEST basicGrid newBbox)
                         in
                         Dirty.diff basicGrid [] oldRoot newRoot
                             |> Expect.equal expected

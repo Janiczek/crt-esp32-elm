@@ -14,18 +14,20 @@ typedef struct FontMono1B {
   const unsigned char *bits;
 } FontMono1B;
 
-#define NUM_FONTS 4
+#define NUM_FONTS 5
 
 #include "font/cg_pixel_4x5_mono_5.h"
 #include "font/f5x7_7.h"
 #include "font/spleen_5x8_8.h"
 #include "font/limey_10.h"
+#include "font/dina_regular_400_10.h"
 
 const FontMono1B* const fonts[NUM_FONTS] = {
   &font_cg_pixel_4x5_mono_5,
   &font_f5x7_7,
   &font_spleen_5x8_8,
   &font_limey_10,
+  &font_dina_regular_400_10,
 };
 
 static inline uint16_t font_bits_byte_len(const FontMono1B* font) {

@@ -1,13 +1,15 @@
-module Node exposing (Node, Type(..), empty, encoder, group, rect, rectFill, text, xLine, yLine)
+module Node exposing (Node, Type(..), empty, encoder, fromKeyAndType, group, jsonDecoder, jsonEncoder, rect, rectFill, text, xLine, yLine)
 
 import BoundingBox exposing (BoundingBox)
 import Bytes exposing (Endianness(..))
 import Bytes.Encode
 import BytesExtraExtra
-import Flate
 import Color exposing (Color)
 import FNV1a
+import Flate
 import Font exposing (Font)
+import Json.Decode as Decode exposing (Decoder)
+import Json.Encode as Encode
 import List.Extra
 
 
@@ -256,6 +258,159 @@ withBbox fonts node_ =
 withHash : Node -> Node
 withHash node_ =
     { node_ | hash = hash node_ }
+
+
+{-| Build a node from a key and type (e.g. when updating only type in an editor).
+-}
+fromKeyAndType : List Font -> String -> Type -> Node
+fromKeyAndType fonts key type_ =
+    case type_ of
+        Rect r ->
+            rect key r
+
+        RectFill r ->
+            rectFill key r
+
+        XLine r ->
+            xLine key r
+
+        YLine r ->
+            yLine key r
+
+        Text r ->
+            text fonts key r
+
+        Group { children } ->
+            group key children
+
+
+jsonEncoder : Node -> Encode.Value
+jsonEncoder node_ =
+    let
+        base tag extra =
+            Encode.object
+                (( "type", Encode.string tag )
+                    :: ( "key", Encode.string node_.key )
+                    :: extra
+                )
+    in
+    case node_.type_ of
+        Rect r ->
+            base "Rect"
+                [ ( "x", Encode.int r.x )
+                , ( "y", Encode.int r.y )
+                , ( "w", Encode.int r.w )
+                , ( "h", Encode.int r.h )
+                , ( "color", Encode.int r.color )
+                ]
+
+        RectFill r ->
+            base "RectFill"
+                [ ( "x", Encode.int r.x )
+                , ( "y", Encode.int r.y )
+                , ( "w", Encode.int r.w )
+                , ( "h", Encode.int r.h )
+                , ( "color", Encode.int r.color )
+                ]
+
+        XLine r ->
+            base "XLine"
+                [ ( "x", Encode.int r.x )
+                , ( "y", Encode.int r.y )
+                , ( "len", Encode.int r.len )
+                , ( "color", Encode.int r.color )
+                ]
+
+        YLine r ->
+            base "YLine"
+                [ ( "x", Encode.int r.x )
+                , ( "y", Encode.int r.y )
+                , ( "len", Encode.int r.len )
+                , ( "color", Encode.int r.color )
+                ]
+
+        Text r ->
+            base "Text"
+                [ ( "x", Encode.int r.x )
+                , ( "y", Encode.int r.y )
+                , ( "text", Encode.string r.text )
+                , ( "fontIndex", Encode.int r.fontIndex )
+                , ( "color", Encode.int r.color )
+                ]
+
+        Group r ->
+            base "Group"
+                [ ( "children", Encode.list jsonEncoder r.children )
+                ]
+
+
+jsonDecoder : List Font -> Decoder Node
+jsonDecoder fonts =
+    Decode.field "type" Decode.string
+        |> Decode.andThen
+            (\tag ->
+                case tag of
+                    "Rect" ->
+                        Decode.map2 (\key r -> rect key r)
+                            (Decode.field "key" Decode.string)
+                            (Decode.map5 (\x y w h color -> { x = x, y = y, w = w, h = h, color = color })
+                                (Decode.field "x" Decode.int)
+                                (Decode.field "y" Decode.int)
+                                (Decode.field "w" Decode.int)
+                                (Decode.field "h" Decode.int)
+                                (Decode.field "color" Decode.int)
+                            )
+
+                    "RectFill" ->
+                        Decode.map2 (\key r -> rectFill key r)
+                            (Decode.field "key" Decode.string)
+                            (Decode.map5 (\x y w h color -> { x = x, y = y, w = w, h = h, color = color })
+                                (Decode.field "x" Decode.int)
+                                (Decode.field "y" Decode.int)
+                                (Decode.field "w" Decode.int)
+                                (Decode.field "h" Decode.int)
+                                (Decode.field "color" Decode.int)
+                            )
+
+                    "XLine" ->
+                        Decode.map2 (\key r -> xLine key r)
+                            (Decode.field "key" Decode.string)
+                            (Decode.map4 (\x y len color -> { x = x, y = y, len = len, color = color })
+                                (Decode.field "x" Decode.int)
+                                (Decode.field "y" Decode.int)
+                                (Decode.field "len" Decode.int)
+                                (Decode.field "color" Decode.int)
+                            )
+
+                    "YLine" ->
+                        Decode.map2 (\key r -> yLine key r)
+                            (Decode.field "key" Decode.string)
+                            (Decode.map4 (\x y len color -> { x = x, y = y, len = len, color = color })
+                                (Decode.field "x" Decode.int)
+                                (Decode.field "y" Decode.int)
+                                (Decode.field "len" Decode.int)
+                                (Decode.field "color" Decode.int)
+                            )
+
+                    "Text" ->
+                        Decode.map2 (\key r -> text fonts key r)
+                            (Decode.field "key" Decode.string)
+                            (Decode.map5 (\x y t fontIndex color -> { x = x, y = y, text = t, fontIndex = fontIndex, color = color })
+                                (Decode.field "x" Decode.int)
+                                (Decode.field "y" Decode.int)
+                                (Decode.field "text" Decode.string)
+                                (Decode.field "fontIndex" Decode.int)
+                                (Decode.field "color" Decode.int)
+                            )
+
+                    "Group" ->
+                        Decode.map2 (\key children -> group key children)
+                            (Decode.field "key" Decode.string)
+                            (Decode.field "children" (Decode.list (Decode.lazy (\_ -> jsonDecoder fonts))))
+
+                    _ ->
+                        Decode.fail ("Unknown node type: " ++ tag)
+            )
 
 
 encoder : Node -> Bytes.Encode.Encoder
