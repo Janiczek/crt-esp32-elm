@@ -29,7 +29,6 @@ enum FrameType : uint8_t {
   MSG_ESP32_DATA_BEGIN = 0x02,
   MSG_SET_ROOT_NODE = 0x03,
   MSG_ACK = 0x04,
-  MSG_LOG = 0x05,
   MSG_ERROR = 0x06,
   MSG_ESP32_DATA_CHUNK = 0x07,
   MSG_ESP32_DATA_END = 0x08,
@@ -143,15 +142,6 @@ static bool sendSerialFrameRaw(uint8_t opcode, const uint8_t* payload, size_t pa
   return true;
 }
 
-bool lastBtnPressed = false;
-void handleButton() {
-  bool btnPressed = digitalRead(BTN_PIN) == LOW;
-  if (!lastBtnPressed && btnPressed) {
-    // some onClick handler here
-  }
-  lastBtnPressed = btnPressed;
-}
-
 // implicitly uses `nodeNew` and will walk it back-to-front and draw nodes
 void drawTile(int tx0, int ty0) {
   BoundingBox tileBbox = { tx0, ty0, TILE_SIZE, TILE_SIZE };
@@ -200,44 +190,6 @@ static size_t esp32DataPayloadLength() {
     payloadLen += 13 + nameLen + font_bits_byte_len(font);
   }
   return payloadLen;
-}
-
-static bool serialWriteU8(uint8_t value) {
-  return serialWriteAll(&value, sizeof(value));
-}
-
-static bool serialWriteU16Le(uint16_t value) {
-  uint8_t bytes[2] = {
-    (uint8_t)(value & 0xff),
-    (uint8_t)((value >> 8) & 0xff),
-  };
-  return serialWriteAll(bytes, sizeof(bytes));
-}
-
-static bool serialWriteU32Le(uint32_t value) {
-  uint8_t bytes[4] = {
-    (uint8_t)(value & 0xff),
-    (uint8_t)((value >> 8) & 0xff),
-    (uint8_t)((value >> 16) & 0xff),
-    (uint8_t)((value >> 24) & 0xff),
-  };
-  return serialWriteAll(bytes, sizeof(bytes));
-}
-
-static bool serialWriteSizedString(const char* value) {
-  size_t len = strlen(value);
-  if (len > 0xffff) {
-    complain("serialWriteSizedString: string too long");
-    return false;
-  }
-
-  return serialWriteU16Le((uint16_t)len)
-      && serialWriteAll((const uint8_t*)value, len);
-}
-
-static bool serialWriteSizedU8List(const uint8_t* data, uint16_t count) {
-  return serialWriteU16Le(count)
-      && serialWriteAll(data, count);
 }
 
 static bool flushEsp32DataChunk(Esp32DataChunkWriter* writer) {
@@ -563,7 +515,6 @@ static void pollSerialTransport() {
 void setup()
 {
   // ESP32-specific
-  pinMode(BTN_PIN, INPUT_PULLUP);
   pinMode(LED_PIN, OUTPUT);
   Serial.begin(115200);
   delay(50);
@@ -581,15 +532,5 @@ void setup()
 
 void loop()
 {
-  // TODO: disabled for now - how does the system behave?
-  //// We don't need to react to events etc. faster than 60FPS.
-  //// If yes, move this enforceFps() to onNewRootNode().
-  //enforceFps();
-
-  handleButton();
   pollSerialTransport();
-
-  // Look ma, no clearing the whole buffer before drawing! (It flickered too
-  // much and we don't have enough memory for double buffering...)
-  // video.clear(0);
 }

@@ -250,22 +250,7 @@ static inline void node_pool_reset(NodePool* pool) {
 
 // --- Deserialization ---
 
-struct node_read_ctx {
-  NodePool* pool;
-  Node** children_out;
-  int n;
-};
-
 static inline Node* node_read(NodePool* pool);
-
-static inline void node_read_group_element(void* ctx) {
-  struct node_read_ctx* g = (struct node_read_ctx*)ctx;
-  Node* child = node_read(g->pool);
-  if (child && g->children_out) {
-    g->children_out[g->n] = child;
-    g->n++;
-  }
-}
 
 static inline Node* node_read(NodePool* pool) {
   uint8_t type = read_u8();
@@ -318,20 +303,20 @@ static inline Node* node_read(NodePool* pool) {
     }
     case 5: { // NODE_GROUP
       uint16_t count = read_u16_le();
-      if (count < 0) {
-        complain("node_read: Negative group count");
-        return nullptr;
-      }
       Node** children = (count > 0) ? node_pool_alloc_ptrs(pool, count) : nullptr;
       if (count > 0 && !children) return nullptr;
       if (count == 0) {
         *slot = nodeGroup(children, count);
         return slot;
       }
-      struct node_read_ctx g = { .pool = pool, .children_out = children, .n = 0 };
-      for (uint16_t i = 0; i < count; i++)
-        node_read_group_element(&g);
-      *slot = nodeGroup(children, g.n);
+      int child_count = 0;
+      for (uint16_t i = 0; i < count; i++) {
+        Node* child = node_read(pool);
+        if (child) {
+          children[child_count++] = child;
+        }
+      }
+      *slot = nodeGroup(children, child_count);
       return slot;
     }
     default: {
