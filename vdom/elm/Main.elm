@@ -37,7 +37,6 @@ import Node exposing (Node, Type(..))
 import Set
 import Svg exposing (Svg)
 import Svg.Attributes
-import Time
 
 
 type alias Flags =
@@ -72,7 +71,7 @@ type alias ModelNotConnected =
 {-| Root node sync state between Elm and the ESP32.
 
 The ESP32 applies root updates in order. Elm can edit the desired root
-frequently, but it must debounce and it must not send a new root while an
+frequently, but it must throttle and it must not send a new root while an
 earlier `SetRootNode` command is awaiting ACK.
 
 Roles:
@@ -81,21 +80,20 @@ Roles:
   - `ackedRoot`: the last root confirmed by an ACK; this is the diff base. What ESP32 is rendering.
   - `inFlightRoot`: a root currently sent to the ESP32 and awaiting ACK. What ESP32 will render next.
 
-Debounce:
+Throttle:
 
-  - While debouncing (`RootDebouncing` / `RootAwaitingAckWithPending`), the
-    `DebounceFrame` timestamp is captured and the send happens once the
-    debounce window has elapsed.
+  - While throttling (`RootThrottled` / `RootAwaitingAckWithPending`), Elm
+    keeps the latest desired root and only flushes on the next animation
+    frame.
 
 -}
 type RootNode
     = RootSynced
         { root : Node
         }
-    | RootDebouncing
+    | RootThrottled
         { ackedRoot : Node
         , desiredRoot : Node
-        , debounceStartedAtMs : Maybe Int
         }
     | RootAwaitingAck
         { ackedRoot : Node
@@ -105,7 +103,6 @@ type RootNode
         { ackedRoot : Node
         , inFlightRoot : Node
         , desiredRoot : Node
-        , debounceStartedAtMs : Maybe Int
         }
 
 
@@ -115,7 +112,7 @@ desiredRoot rootSyncState =
         RootSynced { root } ->
             root
 
-        RootDebouncing r ->
+        RootThrottled r ->
             r.desiredRoot
 
         RootAwaitingAck { inFlightRoot } ->
@@ -156,7 +153,7 @@ type MsgConnected
     | SetPreviewZoom Int
     | SetRootNodeJsonText String
     | RestoreRootNodeJson
-    | DebounceFrame Int
+    | ThrottleFrame
     | RootNodeAcked
 
 
@@ -349,7 +346,7 @@ encodeNodeJson node =
         |> Encode.encode 0
 
 
-{-| The debounce logic in subscriptions will automatically pick this up and send a command.
+{-| The throttle logic in subscriptions will automatically pick this up and send a command.
 -}
 commitNewRootNode : Node -> ModelConnected -> ModelConnected
 commitNewRootNode newRoot modelConnected =
@@ -360,17 +357,15 @@ commitNewRootNode newRoot modelConnected =
         newRootNode =
             case modelConnected.rootNode of
                 RootSynced { root } ->
-                    RootDebouncing
+                    RootThrottled
                         { ackedRoot = root
                         , desiredRoot = newRoot
-                        , debounceStartedAtMs = Nothing
                         }
 
-                RootDebouncing { ackedRoot } ->
-                    RootDebouncing
+                RootThrottled { ackedRoot } ->
+                    RootThrottled
                         { ackedRoot = ackedRoot
                         , desiredRoot = newRoot
-                        , debounceStartedAtMs = Nothing
                         }
 
                 RootAwaitingAck { ackedRoot, inFlightRoot } ->
@@ -378,7 +373,6 @@ commitNewRootNode newRoot modelConnected =
                         { ackedRoot = ackedRoot
                         , inFlightRoot = inFlightRoot
                         , desiredRoot = newRoot
-                        , debounceStartedAtMs = Nothing
                         }
 
                 RootAwaitingAckWithPending { ackedRoot, inFlightRoot } ->
@@ -386,7 +380,6 @@ commitNewRootNode newRoot modelConnected =
                         { ackedRoot = ackedRoot
                         , inFlightRoot = inFlightRoot
                         , desiredRoot = newRoot
-                        , debounceStartedAtMs = Nothing
                         }
     in
     { modelConnected
@@ -394,11 +387,6 @@ commitNewRootNode newRoot modelConnected =
         , rootNodeJsonText = json
         , rootNodeJsonError = Nothing
     }
-
-
-setRootNodeDebounceWaitMs : Int
-setRootNodeDebounceWaitMs =
-    16
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -644,70 +632,34 @@ updateConnected msgConnected modelConnected =
             , Cmd.none
             )
 
-        DebounceFrame nowMs ->
+        ThrottleFrame ->
             case modelConnected.rootNode of
                 RootSynced _ ->
                     ( modelConnected, Cmd.none )
 
-                RootDebouncing r ->
-                    case r.debounceStartedAtMs of
-                        Nothing ->
-                            ( { modelConnected
-                                | rootNode =
-                                    RootDebouncing
-                                        { ackedRoot = r.ackedRoot
-                                        , desiredRoot = r.desiredRoot
-                                        , debounceStartedAtMs = Just nowMs
-                                        }
-                              }
-                            , Cmd.none
-                            )
+                RootThrottled r ->
+                    if r.ackedRoot.hash == r.desiredRoot.hash then
+                        ( { modelConnected | rootNode = RootSynced { root = r.desiredRoot } }
+                        , Cmd.none
+                        )
 
-                        Just startedAtMs ->
-                            if nowMs - startedAtMs < setRootNodeDebounceWaitMs then
-                                ( modelConnected, Cmd.none )
-
-                            else if r.ackedRoot.hash == r.desiredRoot.hash then
-                                ( { modelConnected | rootNode = RootSynced { root = r.desiredRoot } }
-                                , Cmd.none
-                                )
-
-                            else
-                                ( { modelConnected
-                                    | rootNode =
-                                        RootAwaitingAck
-                                            { ackedRoot = r.ackedRoot
-                                            , inFlightRoot = r.desiredRoot
-                                            }
-                                  }
-                                , setRootNode modelConnected.esp32 modelConnected.videoConstants r.ackedRoot r.desiredRoot
-                                )
+                    else
+                        ( { modelConnected
+                            | rootNode =
+                                RootAwaitingAck
+                                    { ackedRoot = r.ackedRoot
+                                    , inFlightRoot = r.desiredRoot
+                                    }
+                          }
+                        , setRootNode modelConnected.esp32 modelConnected.videoConstants r.ackedRoot r.desiredRoot
+                        )
 
                 RootAwaitingAck _ ->
                     ( modelConnected, Cmd.none )
 
-                RootAwaitingAckWithPending r ->
-                    case r.debounceStartedAtMs of
-                        Nothing ->
-                            ( { modelConnected
-                                | rootNode =
-                                    RootAwaitingAckWithPending
-                                        { ackedRoot = r.ackedRoot
-                                        , inFlightRoot = r.inFlightRoot
-                                        , desiredRoot = r.desiredRoot
-                                        , debounceStartedAtMs = Just nowMs
-                                        }
-                              }
-                            , Cmd.none
-                            )
-
-                        Just startedAtMs ->
-                            -- Can't send while waiting for ACK; keep the debounce timer running.
-                            if nowMs - startedAtMs < setRootNodeDebounceWaitMs then
-                                ( modelConnected, Cmd.none )
-
-                            else
-                                ( modelConnected, Cmd.none )
+                RootAwaitingAckWithPending _ ->
+                    -- Can't send while waiting for ACK; keep the latest desired root queued.
+                    ( modelConnected, Cmd.none )
 
         RootNodeAcked ->
             case modelConnected.rootNode of
@@ -729,10 +681,9 @@ updateConnected msgConnected modelConnected =
                     else
                         ( { modelConnected
                             | rootNode =
-                                RootDebouncing
+                                RootThrottled
                                     { ackedRoot = acked
                                     , desiredRoot = r.desiredRoot
-                                    , debounceStartedAtMs = r.debounceStartedAtMs
                                     }
                           }
                         , Cmd.none
@@ -2067,20 +2018,16 @@ subscriptions model =
                         RootSynced _ ->
                             Sub.none
 
-                        RootDebouncing _ ->
+                        RootThrottled _ ->
                             Browser.Events.onAnimationFrame
-                                (\posix ->
-                                    MsgConnected (DebounceFrame (Time.posixToMillis posix))
-                                )
+                                (\_ -> MsgConnected ThrottleFrame)
 
                         RootAwaitingAck _ ->
                             Sub.none
 
                         RootAwaitingAckWithPending _ ->
                             Browser.Events.onAnimationFrame
-                                (\posix ->
-                                    MsgConnected (DebounceFrame (Time.posixToMillis posix))
-                                )
+                                (\_ -> MsgConnected ThrottleFrame)
                     ]
         ]
 
