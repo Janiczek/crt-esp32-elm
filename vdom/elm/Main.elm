@@ -11,16 +11,27 @@ of changing the C source code and recompiling+reflashing. Also it's pretty cool.
 TODO:
 
   - [ ] edit font data
+  - [ ] drag'n'drop nodes
+  - [ ] upload images and convert them to greyscale bitmap
+      - [ ] dithering formats? Applicable for non-BitDepth1?
 
 -}
 
+import Bitmap exposing (BitDepth(..))
+import Bitmap.Bd1_256_16_TestStrip
+import Bitmap.Bd1_64_64_Duke
+import Bitmap.Bd2_256_16_TestStrip
+import Bitmap.Bd2_64_64_Duke
+import Bitmap.Bd4_256_16_TestStrip
+import Bitmap.Bd4_64_64_Duke
+import Bitmap.Bd8_256_16_TestStrip
+import Bitmap.Bd8_64_64_Duke
 import Bitwise
 import Browser exposing (Document)
 import Browser.Events
 import Bytes exposing (Bytes)
 import Bytes.Decode
 import Bytes.Encode
-import Bytes.Extra
 import Color
 import Dirty
 import ESP32 exposing (ESP32, VideoConstants)
@@ -31,7 +42,6 @@ import Html.Attributes.Extra
 import Html.Events
 import Json.Decode as Decode
 import Json.Encode as Encode
-import List.Cartesian
 import List.Extra
 import Node exposing (Node, Type(..))
 import Set
@@ -206,8 +216,8 @@ getNodeAtPath path root =
                     Nothing
 
 
-setNodeAtPath : List Font -> List Int -> Node -> Node -> Node
-setNodeAtPath fonts path newNode root =
+setNodeAtPath : List Int -> Node -> Node -> Node
+setNodeAtPath path newNode root =
     case path of
         [] ->
             newNode
@@ -219,7 +229,7 @@ setNodeAtPath fonts path newNode root =
                         Just child ->
                             let
                                 newChild =
-                                    setNodeAtPath fonts rest newNode child
+                                    setNodeAtPath rest newNode child
                             in
                             List.Extra.updateAt i (always newChild) children
                                 |> Node.group root.key
@@ -231,8 +241,8 @@ setNodeAtPath fonts path newNode root =
                     root
 
 
-removeNodeAtPath : List Font -> List Int -> Node -> Node
-removeNodeAtPath fonts path root =
+removeNodeAtPath : List Int -> Node -> Node
+removeNodeAtPath path root =
     case path of
         [] ->
             root
@@ -252,7 +262,7 @@ removeNodeAtPath fonts path root =
                         Just child ->
                             let
                                 newChild =
-                                    removeNodeAtPath fonts rest child
+                                    removeNodeAtPath rest child
                             in
                             List.Extra.updateAt i (always newChild) children
                                 |> Node.group root.key
@@ -264,8 +274,8 @@ removeNodeAtPath fonts path root =
                     root
 
 
-insertChildAtPath : List Font -> List Int -> Int -> Node -> Node -> Node
-insertChildAtPath fonts parentPath index newChild root =
+insertChildAtPath : List Int -> Int -> Node -> Node -> Node
+insertChildAtPath parentPath index newChild root =
     case getNodeAtPath parentPath root of
         Just parent ->
             case parent.type_ of
@@ -274,13 +284,101 @@ insertChildAtPath fonts parentPath index newChild root =
                         inserted =
                             insertAt index newChild children
                     in
-                    setNodeAtPath fonts parentPath (Node.group parent.key inserted) root
+                    setNodeAtPath parentPath (Node.group parent.key inserted) root
 
                 _ ->
                     root
 
         Nothing ->
             root
+
+
+type alias EmbeddedBitmap =
+    { label : String
+    , w : Int
+    , h : Int
+    , bitDepth : BitDepth
+    , data : List Int
+    }
+
+
+embeddedFromTuple : String -> ( ( Int, Int ), BitDepth, List Int ) -> EmbeddedBitmap
+embeddedFromTuple label ( ( w, h ), bitDepth, data ) =
+    { label = label
+    , w = w
+    , h = h
+    , bitDepth = bitDepth
+    , data = data
+    }
+
+
+{-| Every `Bitmap.*` asset imported in this module; used by the bitmap preset picker.
+Adding a new `import Bitmap.*` should add a matching entry here.
+-}
+allBitmaps : List EmbeddedBitmap
+allBitmaps =
+    [ embeddedFromTuple "Duke 64×64 · 1-bit" Bitmap.Bd1_64_64_Duke.bd1_64_64_duke
+    , embeddedFromTuple "Duke 64×64 · 2-bit" Bitmap.Bd2_64_64_Duke.bd2_64_64_duke
+    , embeddedFromTuple "Duke 64×64 · 4-bit" Bitmap.Bd4_64_64_Duke.bd4_64_64_duke
+    , embeddedFromTuple "Duke 64×64 · 8-bit" Bitmap.Bd8_64_64_Duke.bd8_64_64_duke
+    , embeddedFromTuple "Test strip 256×16 · 1-bit" Bitmap.Bd1_256_16_TestStrip.bd1_256_16_teststrip
+    , embeddedFromTuple "Test strip 256×16 · 2-bit" Bitmap.Bd2_256_16_TestStrip.bd2_256_16_teststrip
+    , embeddedFromTuple "Test strip 256×16 · 4-bit" Bitmap.Bd4_256_16_TestStrip.bd4_256_16_teststrip
+    , embeddedFromTuple "Test strip 256×16 · 8-bit" Bitmap.Bd8_256_16_TestStrip.bd8_256_16_teststrip
+    ]
+
+
+embeddedBitmapMatchIndex : { a | w : Int, h : Int, bitDepth : BitDepth, data : List Int } -> Maybe Int
+embeddedBitmapMatchIndex r =
+    allBitmaps
+        |> List.indexedMap Tuple.pair
+        |> List.Extra.find
+            (\( _, e ) ->
+                e.w == r.w && e.h == r.h && e.bitDepth == r.bitDepth && e.data == r.data
+            )
+        |> Maybe.map Tuple.first
+
+
+{-| Top-left `(x, y)` so the bitmap is centered on the CRT usable rectangle, clamped so it stays in range.
+-}
+centerBitmapPosition : VideoConstants -> { a | w : Int, h : Int } -> ( Int, Int )
+centerBitmapPosition vc r =
+    let
+        maxX =
+            vc.xMax - r.w + 1
+
+        maxY =
+            vc.yMax - r.h + 1
+
+        x =
+            clamp vc.xMin maxX (vc.xCenter - r.w // 2)
+
+        y =
+            clamp vc.yMin maxY (vc.yCenter - r.h // 2)
+    in
+    ( x, y )
+
+
+defaultBitmapConfig :
+    { x : Int
+    , y : Int
+    , w : Int
+    , h : Int
+    , bitDepth : BitDepth
+    , data : List Int
+    }
+defaultBitmapConfig =
+    let
+        ( ( w, h ), bitDepth, data ) =
+            Bitmap.Bd8_256_16_TestStrip.bd8_256_16_teststrip
+    in
+    { x = 0
+    , y = 0
+    , w = w
+    , h = h
+    , bitDepth = bitDepth
+    , data = data
+    }
 
 
 defaultNodeForType : List Font -> VideoConstants -> Type -> Node
@@ -310,6 +408,9 @@ defaultNodeForType fonts vc type_ =
 
         Text _ ->
             Node.text fonts "text" { x = x, y = y, text = "Text", fontIndex = 0, color = c }
+
+        Bitmap _ ->
+            Node.bitmap "bitmap" { defaultBitmapConfig | x = x, y = y }
 
         Group _ ->
             Node.group "group" []
@@ -412,14 +513,15 @@ update msg model =
                     let
                         sanitizedChunkCount =
                             max 0 initialLoadStart.expectedChunkCount
-
-                        sanitizedTotalBytes =
-                            max 0 initialLoadStart.expectedTotalBytes
                     in
                     ( NotConnected
                         { nc
                             | loadingProgress =
                                 if sanitizedChunkCount > 0 then
+                                    let
+                                        sanitizedTotalBytes =
+                                            max 0 initialLoadStart.expectedTotalBytes
+                                    in
                                     Just
                                         { expectedChunkCount = sanitizedChunkCount
                                         , receivedChunkCount = 0
@@ -439,16 +541,16 @@ update msg model =
         InitialLoadChunkReceived chunkBytes ->
             case model of
                 NotConnected nc ->
-                    let
-                        sanitizedChunkBytes =
-                            max 0 chunkBytes
-                    in
                     ( NotConnected
                         { nc
                             | loadingProgress =
                                 nc.loadingProgress
                                     |> Maybe.map
                                         (\progress ->
+                                            let
+                                                sanitizedChunkBytes =
+                                                    max 0 chunkBytes
+                                            in
                                             { progress
                                                 | receivedChunkCount =
                                                     min progress.expectedChunkCount (progress.receivedChunkCount + 1)
@@ -537,33 +639,34 @@ updateConnected msgConnected modelConnected =
                 existing =
                     getNodeAtPath path (desiredRoot modelConnected.rootNode)
 
-                newNode =
-                    case type_ of
-                        Group _ ->
-                            case existing of
-                                Just n ->
-                                    case n.type_ of
-                                        Node.Group { children } ->
-                                            Node.group key children
-
-                                        _ ->
-                                            Node.group key []
-
-                                Nothing ->
-                                    Node.group key []
-
-                        _ ->
-                            case existing of
-                                Just _ ->
-                                    Node.fromKeyAndType modelConnected.esp32.fonts key type_
-
-                                Nothing ->
-                                    desiredRoot modelConnected.rootNode
-
                 newRoot =
                     case existing of
                         Just _ ->
-                            setNodeAtPath modelConnected.esp32.fonts path newNode (desiredRoot modelConnected.rootNode)
+                            let
+                                newNode =
+                                    case type_ of
+                                        Group _ ->
+                                            case existing of
+                                                Just n ->
+                                                    case n.type_ of
+                                                        Node.Group { children } ->
+                                                            Node.group key children
+
+                                                        _ ->
+                                                            Node.group key []
+
+                                                Nothing ->
+                                                    Node.group key []
+
+                                        _ ->
+                                            case existing of
+                                                Just _ ->
+                                                    Node.fromKeyAndType modelConnected.esp32.fonts key type_
+
+                                                Nothing ->
+                                                    desiredRoot modelConnected.rootNode
+                            in
+                            setNodeAtPath path newNode (desiredRoot modelConnected.rootNode)
 
                         Nothing ->
                             desiredRoot modelConnected.rootNode
@@ -579,7 +682,7 @@ updateConnected msgConnected modelConnected =
                     defaultNodeForType modelConnected.esp32.fonts modelConnected.videoConstants type_
 
                 newRoot =
-                    insertChildAtPath modelConnected.esp32.fonts parentPath index newChild (desiredRoot modelConnected.rootNode)
+                    insertChildAtPath parentPath index newChild (desiredRoot modelConnected.rootNode)
             in
             ( modelConnected
                 |> commitNewRootNode newRoot
@@ -589,7 +692,7 @@ updateConnected msgConnected modelConnected =
         RemoveNode path ->
             let
                 newRoot =
-                    removeNodeAtPath modelConnected.esp32.fonts path (desiredRoot modelConnected.rootNode)
+                    removeNodeAtPath path (desiredRoot modelConnected.rootNode)
             in
             ( { modelConnected
                 | selectedPath =
@@ -715,7 +818,7 @@ setRootNode esp32 videoConstants previousNode node =
 
             bytes =
                 Bytes.Encode.sequence
-                    [ Node.encoder node
+                    [ Node.bytesEncoder node
                     , Dirty.dirtyTilesEncoder dirtyTiles
                     ]
                     |> Bytes.Encode.encode
@@ -1116,6 +1219,9 @@ viewTreeNode model path node =
                 Text _ ->
                     "Text"
 
+                Bitmap _ ->
+                    "Bitmap"
+
                 Node.Group _ ->
                     "Group"
 
@@ -1153,7 +1259,7 @@ viewTreeNode model path node =
                 [ Html.Attributes.style "margin-left" "0.5rem"
                 , Html.Attributes.style "font-size" "0.75rem"
                 ]
-                (if path == [] then
+                (if List.isEmpty path then
                     [ viewAddChildButton model path ]
 
                  else
@@ -1234,6 +1340,13 @@ viewAddChildButton model path =
                                 "text" ->
                                     MsgConnected (InsertChild path insertIndex (Text { x = vc.xMin, y = vc.yMin, text = "Text", fontIndex = 0, color = Color.white }))
 
+                                "bitmap" ->
+                                    MsgConnected
+                                        (InsertChild path
+                                            insertIndex
+                                            (Bitmap { defaultBitmapConfig | x = vc.xMin, y = vc.yMin })
+                                        )
+
                                 "group" ->
                                     MsgConnected (InsertChild path insertIndex (Group { children = [] }))
 
@@ -1249,6 +1362,7 @@ viewAddChildButton model path =
             , addOption "xLine" "XLine"
             , addOption "yLine" "YLine"
             , addOption "text" "Text"
+            , addOption "bitmap" "Bitmap"
             , addOption "group" "Group"
             ]
 
@@ -1405,28 +1519,85 @@ viewNodeDetails model node path =
                     , colorInput path node.key (\color -> Text { r | color = color }) r.color
                     ]
 
+                Bitmap r ->
+                    [ fieldLabel "x"
+                    , intSliderInput model.videoConstants.xMin model.videoConstants.xMax path node.key (\x -> Bitmap { r | x = x }) r.x
+                    , fieldLabel "y"
+                    , intSliderInput model.videoConstants.yMin model.videoConstants.yMax path node.key (\y -> Bitmap { r | y = y }) r.y
+                    , fieldLabel "center"
+                    , Html.button
+                        [ Html.Events.onClick
+                            (MsgConnected
+                                (let
+                                    ( cx, cy ) =
+                                        centerBitmapPosition model.videoConstants r
+                                 in
+                                 UpdateNodeAtPath path node.key (Bitmap { r | x = cx, y = cy })
+                                )
+                            )
+                        ]
+                        [ Html.text "Center in usable area" ]
+                    , fieldLabel "preset"
+                    , Html.select
+                        [ Html.Events.onInput
+                            (\s ->
+                                String.toInt s
+                                    |> Maybe.andThen (\i -> List.Extra.getAt i allBitmaps)
+                                    |> Maybe.map
+                                        (\e ->
+                                            MsgConnected
+                                                (UpdateNodeAtPath path
+                                                    node.key
+                                                    (Bitmap
+                                                        { r
+                                                            | w = e.w
+                                                            , h = e.h
+                                                            , bitDepth = e.bitDepth
+                                                            , data = e.data
+                                                        }
+                                                    )
+                                                )
+                                        )
+                                    |> Maybe.withDefault (MsgConnected (SelectNode path))
+                            )
+                        , Html.Attributes.style "width" "100%"
+                        , Html.Attributes.style "box-sizing" "border-box"
+                        ]
+                        (allBitmaps
+                            |> List.indexedMap
+                                (\i e ->
+                                    Html.option
+                                        [ Html.Attributes.value (String.fromInt i)
+                                        , Html.Attributes.Extra.attributeIf (embeddedBitmapMatchIndex r == Just i) (Html.Attributes.attribute "selected" "")
+                                        ]
+                                        [ Html.text e.label ]
+                                )
+                        )
+                    , fieldLabel "data"
+                    , Html.div
+                        [ Html.Attributes.style "font-size" "0.8rem"
+                        , Html.Attributes.style "color" "var(--muted)"
+                        , Html.Attributes.style "white-space" "pre-wrap"
+                        ]
+                        [ Html.text
+                            ("w: "
+                                ++ String.fromInt r.w
+                                ++ "\nh: "
+                                ++ String.fromInt r.h
+                                ++ "\nbitDepth: "
+                                ++ String.fromInt (Bitmap.bitDepthToInt r.bitDepth)
+                                ++ "\nStored bytes: "
+                                ++ String.fromInt (List.length r.data)
+                                ++ "\nPreset replaces w, h, bitDepth, and packed data (one-way). JSON pane can still overwrite data."
+                            )
+                        ]
+                    ]
+
                 Node.Group _ ->
                     []
     in
     (keyField ++ typeFields)
         |> List.map (\e -> Html.div [] [ e ])
-
-
-intInput : List Int -> String -> (Int -> Type) -> Int -> Html Msg
-intInput path key toType current =
-    Html.input
-        [ Html.Attributes.type_ "number"
-        , Html.Attributes.value (String.fromInt current)
-        , Html.Events.onInput
-            (\s ->
-                String.toInt s
-                    |> Maybe.map (\v -> MsgConnected (UpdateNodeAtPath path key (toType v)))
-                    |> Maybe.withDefault (MsgConnected (SelectNode path))
-            )
-        , Html.Attributes.style "width" "100%"
-        , Html.Attributes.style "box-sizing" "border-box"
-        ]
-        []
 
 
 intSliderInput : Int -> Int -> List Int -> String -> (Int -> Type) -> Int -> Html Msg
@@ -1464,6 +1635,17 @@ intSliderInput min_ max_ path key toType current =
             ]
             [ Html.text (String.fromInt current_) ]
         ]
+
+
+readOnlyInput : String -> Html Msg
+readOnlyInput value_ =
+    Html.input
+        [ Html.Attributes.value value_
+        , Html.Attributes.readonly True
+        , Html.Attributes.style "width" "100%"
+        , Html.Attributes.style "box-sizing" "border-box"
+        ]
+        []
 
 
 colorInput : List Int -> String -> (Int -> Type) -> Int -> Html Msg
@@ -1542,249 +1724,6 @@ viewConnected model =
                 [ viewPreviewColumn vc model.previewZoom (desiredRoot model.rootNode) model.esp32.fonts ]
             ]
         , viewSidebarColumn model
-        ]
-
-
-viewDeviceInfo : ESP32 -> VideoConstants -> Html msg
-viewDeviceInfo esp32 vc =
-    let
-        tableStyle : List (Html.Attribute msg)
-        tableStyle =
-            [ Html.Attributes.style "font-family" "ui-monospace, monospace"
-            , Html.Attributes.style "font-size" "0.875rem"
-            , Html.Attributes.style "border-collapse" "collapse"
-            ]
-
-        thStyle : List (Html.Attribute msg)
-        thStyle =
-            [ Html.Attributes.style "text-align" "left"
-            , Html.Attributes.style "padding" "0.25rem 0.5rem 0.25rem 0"
-            , Html.Attributes.style "color" "var(--muted)"
-            ]
-
-        tdStyle : List (Html.Attribute msg)
-        tdStyle =
-            [ Html.Attributes.style "padding" "0.25rem 0.5rem" ]
-
-        tableRow : String -> Int -> Html msg
-        tableRow name value =
-            Html.tr []
-                [ Html.th
-                    (thStyle
-                        ++ [ Html.Attributes.style "font-weight" "500" ]
-                    )
-                    [ Html.text name ]
-                , Html.td tdStyle [ Html.text (String.fromInt value) ]
-                ]
-
-        esp32Table : Html msg
-        esp32Table =
-            Html.table
-                (Html.Attributes.style "margin-top" "0.5rem"
-                    :: tableStyle
-                )
-                [ Html.thead []
-                    [ Html.tr []
-                        [ Html.th
-                            (thStyle
-                                ++ [ Html.Attributes.style "font-weight" "600" ]
-                            )
-                            [ Html.text "ESP32" ]
-                        , Html.th tdStyle []
-                        ]
-                    ]
-                , Html.tbody []
-                    [ tableRow "videoWidth" esp32.videoWidth
-                    , tableRow "videoHeight" esp32.videoHeight
-                    , tableRow "crtPaddingLeft" esp32.crtPaddingLeft
-                    , tableRow "crtPaddingRight" esp32.crtPaddingRight
-                    , tableRow "crtPaddingTop" esp32.crtPaddingTop
-                    , tableRow "crtPaddingBottom" esp32.crtPaddingBottom
-                    , tableRow "maxTotalNodes" esp32.maxTotalNodes
-                    , tableRow "nodeGroupMaxChildren" esp32.nodeGroupMaxChildren
-                    , Html.tr []
-                        [ Html.th
-                            (thStyle
-                                ++ [ Html.Attributes.style "font-weight" "500" ]
-                            )
-                            [ Html.text "fonts" ]
-                        , Html.td tdStyle
-                            [ Html.text (String.fromInt (List.length esp32.fonts)) ]
-                        ]
-                    ]
-                ]
-
-        vcTable : Html msg
-        vcTable =
-            Html.table
-                (Html.Attributes.style "margin-top" "0.75rem"
-                    :: tableStyle
-                )
-                [ Html.thead []
-                    [ Html.tr []
-                        [ Html.th
-                            (thStyle
-                                ++ [ Html.Attributes.style "font-weight" "600" ]
-                            )
-                            [ Html.text "Video constants" ]
-                        , Html.th tdStyle []
-                        ]
-                    ]
-                , Html.tbody []
-                    [ tableRow "xMin" vc.xMin
-                    , tableRow "xMax" vc.xMax
-                    , tableRow "yMin" vc.yMin
-                    , tableRow "yMax" vc.yMax
-                    , tableRow "usableWidth" vc.usableWidth
-                    , tableRow "usableHeight" vc.usableHeight
-                    , tableRow "xCenter" vc.xCenter
-                    , tableRow "yCenter" vc.yCenter
-                    ]
-                ]
-
-        fontsSection : Html msg
-        fontsSection =
-            Html.div [ Html.Attributes.style "margin-top" "1rem" ]
-                [ Html.div
-                    [ Html.Attributes.style "font-weight" "600"
-                    , Html.Attributes.style "font-size" "0.875rem"
-                    , Html.Attributes.style "margin-bottom" "0.5rem"
-                    ]
-                    [ Html.text "Fonts" ]
-                , Html.table (tableStyle ++ [ Html.Attributes.style "width" "100%" ])
-                    [ Html.thead []
-                        [ Html.tr []
-                            [ Html.th thStyle [ Html.text "Name" ]
-                            , Html.th thStyle [ Html.text "ASCII" ]
-                            , Html.th thStyle [ Html.text "Glyphs" ]
-                            , Html.th thStyle [ Html.text "Size" ]
-                            , Html.th thStyle [ Html.text "Extra LH" ]
-                            , Html.th thStyle [ Html.text "Bitmap" ]
-                            ]
-                        ]
-                    , Html.tbody []
-                        (List.map (viewFontRow tdStyle) esp32.fonts)
-                    ]
-                ]
-    in
-    Html.div
-        [ Html.Attributes.style "border" "1px solid #ddd"
-        , Html.Attributes.style "border-radius" "4px"
-        , Html.Attributes.style "padding" "0.75rem 1rem"
-        , Html.Attributes.style "max-width" "100%"
-        ]
-        [ esp32Table, vcTable, fontsSection ]
-
-
-viewFontRow :
-    List (Html.Attribute msg)
-    -> Font
-    -> Html msg
-viewFontRow tdStyle font =
-    Html.tr []
-        [ Html.td tdStyle [ Html.text font.name ]
-        , Html.td tdStyle
-            [ Html.text
-                (String.fromInt font.asciiFirst
-                    ++ "–"
-                    ++ String.fromInt font.asciiLast
-                )
-            ]
-        , Html.td tdStyle [ Html.text (String.fromInt font.numGlyphs) ]
-        , Html.td tdStyle
-            [ Html.text
-                (String.fromInt font.glyphWidth
-                    ++ "×"
-                    ++ String.fromInt font.glyphHeight
-                )
-            ]
-        , Html.td tdStyle [ Html.text (String.fromInt font.extraLineHeight) ]
-        , Html.td tdStyle [ viewFontBitmap font ]
-        ]
-
-
-viewFontBitmap : Font -> Html msg
-viewFontBitmap font =
-    let
-        scale : Int
-        scale =
-            3
-
-        glyphsPerRow : Int
-        glyphsPerRow =
-            16
-
-        rows : Int
-        rows =
-            (font.numGlyphs + glyphsPerRow - 1) // glyphsPerRow
-
-        totalWidth : Int
-        totalWidth =
-            glyphsPerRow * font.glyphWidth * scale
-
-        totalHeight : Int
-        totalHeight =
-            rows * font.glyphHeight * scale
-
-        glyphPixel : Int -> Int -> Int -> Bool
-        glyphPixel g row col =
-            let
-                byteIdx : Int
-                byteIdx =
-                    g * font.glyphHeight + row
-
-                byte : Int
-                byte =
-                    font.bits
-                        |> List.drop byteIdx
-                        |> List.head
-                        |> Maybe.withDefault 0
-
-                bit : Int
-                bit =
-                    Bitwise.and (Bitwise.shiftRightBy (7 - col) byte) 1
-            in
-            bit == 1
-
-        rects : List (Svg msg)
-        rects =
-            List.Cartesian.map3
-                (\g r c ->
-                    if glyphPixel g r c then
-                        Just
-                            (Svg.rect
-                                [ Svg.Attributes.x (String.fromInt (scale * (modBy glyphsPerRow g * font.glyphWidth + c)))
-                                , Svg.Attributes.y (String.fromInt (scale * (g // glyphsPerRow * font.glyphHeight + r)))
-                                , Svg.Attributes.width (String.fromInt scale)
-                                , Svg.Attributes.height (String.fromInt scale)
-                                , Svg.Attributes.fill "currentColor"
-                                ]
-                                []
-                            )
-
-                    else
-                        Nothing
-                )
-                (List.range 0 (font.numGlyphs - 1))
-                (List.range 0 (font.glyphHeight - 1))
-                (List.range 0 (font.glyphWidth - 1))
-                |> List.filterMap identity
-    in
-    Html.div
-        [ Html.Attributes.style "display" "inline-block"
-        , Html.Attributes.style "line-height" "0"
-        ]
-        [ Svg.svg
-            [ Svg.Attributes.width (String.fromInt totalWidth)
-            , Svg.Attributes.height (String.fromInt totalHeight)
-            , Svg.Attributes.viewBox
-                ("0 0 "
-                    ++ String.fromInt totalWidth
-                    ++ " "
-                    ++ String.fromInt totalHeight
-                )
-            ]
-            rects
         ]
 
 
@@ -1930,12 +1869,11 @@ renderNodeToSvg fonts node_ =
                             code >= font.asciiFirst && code <= font.asciiLast
 
                         drawChar gx gy char =
-                            let
-                                code =
-                                    Char.toCode char
-                            in
                             if hasChar char then
                                 let
+                                    code =
+                                        Char.toCode char
+
                                     glyphIdx =
                                         code - font.asciiFirst
                                 in
@@ -1994,6 +1932,24 @@ renderNodeToSvg fonts node_ =
                     in
                     foldChars x x y (String.toList text)
 
+        Bitmap { x, y, w, h, bitDepth, data } ->
+            List.range 0 (h - 1)
+                |> List.concatMap
+                    (\row ->
+                        Bitmap.rowGraysSequential bitDepth w row data
+                            |> List.indexedMap
+                                (\column gray ->
+                                    Svg.rect
+                                        [ Svg.Attributes.x (String.fromInt (x + column))
+                                        , Svg.Attributes.y (String.fromInt (y + row))
+                                        , Svg.Attributes.width "1"
+                                        , Svg.Attributes.height "1"
+                                        , Svg.Attributes.fill (colorToCss gray)
+                                        ]
+                                        []
+                                )
+                    )
+
         Group { children } ->
             List.concatMap (renderNodeToSvg fonts) children
 
@@ -2043,50 +1999,3 @@ onConnectSuccessful_ onSuccess onFail =
                 Nothing ->
                     onFail "Failed to decode ESP32 data"
         )
-
-
-textScene : ESP32 -> VideoConstants -> String -> Int -> Node
-textScene esp32 c text fontIndex_ =
-    Node.group "main"
-        [ Node.text esp32.fonts
-            "text-scene"
-            { x = c.xMin + 5
-            , y = c.yMin + 3
-            , text = text
-            , fontIndex = fontIndex_
-            , color = Color.white
-            }
-        , Node.rectFill "cross bg"
-            { x = c.xMax - 31
-            , y = c.yMax - 31
-            , w = 25
-            , h = 25
-            , color = Color.white
-            }
-        , Node.xLine "cross horiz"
-            { x = c.xMax - 30
-            , y = c.yMax - 19
-            , len = 23
-            , color = Color.gray
-            }
-        , Node.yLine "cross vert"
-            { x = c.xMax - 19
-            , y = c.yMax - 30
-            , len = 23
-            , color = Color.gray
-            }
-        , Node.rect "border shadow"
-            { x = c.xMin
-            , y = c.yMin
-            , w = c.usableWidth
-            , h = c.usableHeight
-            , color = Color.gray
-            }
-        , Node.rect "border"
-            { x = c.xMin + 1
-            , y = c.yMin + 1
-            , w = c.usableWidth - 2
-            , h = c.usableHeight - 2
-            , color = Color.white
-            }
-        ]

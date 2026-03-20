@@ -2,6 +2,7 @@ module FNV1a exposing
     ( initialSeed
     , updateInt16
     , updateInt32
+    , updateBytes
     , updateInt8
     , updateString
     )
@@ -34,7 +35,13 @@ step h b =
 -}
 updateString : String -> Int -> Int
 updateString str seed =
-    String.foldl (\c acc -> step acc (Char.toCode c)) seed str
+    String.foldl (\c acc -> updateInt8 (Char.toCode c) acc) seed str
+
+{-| Feed a list of bytes into the hash.
+-}
+updateBytes : List Int -> Int -> Int
+updateBytes bytes seed =
+    List.foldl updateInt8 seed bytes
 
 
 {-| Feed a signed 8-bit integer (one byte, endianness doesn't matter) into the hash.

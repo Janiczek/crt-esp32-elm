@@ -13,7 +13,6 @@ module Dirty exposing
 -}
 
 import BoundingBox exposing (BoundingBox)
-import Bytes exposing (Endianness(..))
 import Bytes.Encode
 import BytesExtraExtra
 import Dict exposing (Dict)
@@ -74,9 +73,6 @@ diff grid fonts oldRoot newRoot =
 
                 else
                     let
-                        oldBorder =
-                            markRectBorder grid oldRoot.bbox
-
                         newBorder =
                             markRectBorder grid newRoot.bbox
                     in
@@ -84,6 +80,10 @@ diff grid fonts oldRoot newRoot =
                         newBorder
 
                     else
+                        let
+                            oldBorder =
+                                markRectBorder grid oldRoot.bbox
+                        in
                         Set.union oldBorder newBorder
 
             ( Group g1, Group g2 ) ->
@@ -273,7 +273,6 @@ changedTextCells oldStr newStr =
     allKeys
         |> Set.filter cellChanged
         |> Set.toList
-        |> List.sort
 
 
 {-| Produces all text cells in a string.
@@ -329,24 +328,6 @@ textCellsUntilNewline row col chars =
                     go (( r, c ) :: acc) rest r (c + 1)
     in
     go [] chars row col
-
-
-textCellToTile : TileGrid -> { text | x : Int, y : Int } -> Font -> ( Int, Int ) -> ( Int, Int )
-textCellToTile grid { x, y } font ( row, col ) =
-    let
-        screenX =
-            x + col * font.glyphWidth
-
-        screenY =
-            y + row * font.glyphHeight + font.extraLineHeight
-
-        tileX =
-            screenX // grid.tileSize
-
-        tileY =
-            screenY // grid.tileSize
-    in
-    ( tileX, tileY )
 
 
 {-| Bounding box of the glyph at the given (row, col) in screen space.

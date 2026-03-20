@@ -18,3 +18,5 @@
 #define MY_CRT_PADDING_B 10
 
 #define COLOR_BLACK 0
+
+#define ESP32_DATA_CHUNK_SIZE 4096

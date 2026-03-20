@@ -1,5 +1,6 @@
 module CompileTests exposing (suite)
 
+import Bitmap
 import BoundingBox
 import BytesExtraExtra
 import Color
@@ -21,6 +22,13 @@ suite =
                 let
                     _ =
                         BoundingBox.BoundingBox
+                in
+                Expect.pass
+        , Test.test "Bitmap" <|
+            \() ->
+                let
+                    _ =
+                        Bitmap.rowGraysSequential
                 in
                 Expect.pass
         , Test.test "BytesExtraExtra" <|

@@ -18,7 +18,8 @@ typedef enum {
   NODE_XLINE,
   NODE_YLINE,
   NODE_TEXT,
-  NODE_GROUP
+  NODE_GROUP,
+  NODE_BITMAP
 } NodeType;
 
 // needed for the self-reference below
@@ -35,8 +36,18 @@ typedef struct Node {
     struct { int x, y, len; uint8_t color; } yline;
     struct { int x, y; const char* text; int font_index; uint8_t color; } text;
     struct { Node** children; int child_count; } group;
+    struct { int x, y, w, h; uint8_t bit_depth; uint8_t* data; size_t byte_len; } bitmap;
   } u;
 } Node;
+
+static inline bool bitmapBitDepthSupported(uint8_t bit_depth) {
+  return bit_depth == 1 || bit_depth == 2 || bit_depth == 4 || bit_depth == 8;
+}
+
+static inline size_t bitmapPackedByteLength(int w, int h, uint8_t bit_depth) {
+  uint64_t total_bits = (uint64_t)w * (uint64_t)h * (uint64_t)bit_depth;
+  return (size_t)((total_bits + 7u) / 8u);
+}
 
 static inline Node nodeGroup(Node** children, int child_count) {
   Node n = {};
@@ -186,6 +197,33 @@ static inline Node nodeText(int x, int y, const char* text, int font_index, uint
   return n;
 }
 
+static inline Node nodeBitmap(int x, int y, int w, int h, uint8_t bit_depth, uint8_t* data, size_t byte_len) {
+  Node n = {};
+  n.type = NODE_BITMAP;
+
+  // BBOX
+  n.bbox.x = x;
+  n.bbox.y = y;
+  n.bbox.w = w;
+  n.bbox.h = h;
+
+  // CONTENT
+  n.u.bitmap.x = x;
+  n.u.bitmap.y = y;
+  n.u.bitmap.w = w;
+  n.u.bitmap.h = h;
+  n.u.bitmap.bit_depth = bit_depth;
+  n.u.bitmap.data = data;
+  n.u.bitmap.byte_len = byte_len;
+
+  size_t expected_len = bitmapPackedByteLength(w, h, bit_depth);
+  if (expected_len != byte_len) {
+    complain("nodeBitmap: byte length mismatch");
+  }
+
+  return n;
+}
+
 // The callback can short-circuit the walk (eg. when drawing, if the node's bbox
 // doesn't intersect with the dirty tile).
 template<typename F>
@@ -238,6 +276,12 @@ static inline void node_pool_free(NodePool* pool) {
     if (pool->nodes[i].type == NODE_TEXT && pool->nodes[i].u.text.text) {
       free((void*)pool->nodes[i].u.text.text);
       pool->nodes[i].u.text.text = nullptr;
+    }
+    // NODE_BITMAP data
+    if (pool->nodes[i].type == NODE_BITMAP && pool->nodes[i].u.bitmap.data) {
+      free(pool->nodes[i].u.bitmap.data);
+      pool->nodes[i].u.bitmap.data = nullptr;
+      pool->nodes[i].u.bitmap.byte_len = 0;
     }
   }
 }
@@ -317,6 +361,31 @@ static inline Node* node_read(NodePool* pool) {
         }
       }
       *slot = nodeGroup(children, child_count);
+      return slot;
+    }
+    case 6: { // NODE_BITMAP
+      int x = read_i32_le();
+      int y = read_i32_le();
+      int w = read_i32_le();
+      int h = read_i32_le();
+      uint8_t bit_depth = read_u8();
+      size_t byte_len = bitmapPackedByteLength(w, h, bit_depth);
+      uint16_t declared_byte_len = 0;
+      uint16_t compressed_len = 0;
+      if (!read_sized_compressed_bytes_header(&declared_byte_len, &compressed_len)) {
+        return nullptr;
+      }
+      if ((size_t)declared_byte_len != byte_len) {
+        complain("node_read: bitmap byte length mismatch");
+        activeReadBuffer->ok = false;
+        return nullptr;
+      }
+      uint8_t* data = read_zlib_bytes(compressed_len, byte_len, false);
+      if (!activeReadBuffer->ok) {
+        free(data);
+        return nullptr;
+      }
+      *slot = nodeBitmap(x, y, w, h, bit_depth, data, byte_len);
       return slot;
     }
     default: {

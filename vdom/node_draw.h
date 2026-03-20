@@ -14,8 +14,11 @@ void node_draw_tileXLine_inner(int x0, int x1, int y, uint8_t color, int tx0, in
     // right        left         top         bottom
     // of the line
     int cx0 = MAX(x0, tx0); // clamped x0
-    int cx1 = MIN(x1, tx1); // clamped x1
-    video.xLine(cx0,cx1,y,color);
+    int cx1 = MIN(x1, tx1); // clamped x1 (inclusive; esp32lib xLine uses half-open x2)
+    int x2 = cx1 + 1;
+    if (x2 > video.xres)
+      x2 = video.xres;
+    video.xLine(cx0, x2, y, color);
   }
 }
 
@@ -107,5 +110,119 @@ void node_draw_tileText(Node* node, int tx0, int ty0) {
       drawCharInRect(fi, cx0, cy0, *p, color, tx0, ty0, tx1, ty1);
     }
     px += adv;
+  }
+}
+
+static inline uint8_t bitmap_tile_pixel_gray_1(const uint8_t* data, size_t byte_len, int pixel_index) {
+  if (!data || pixel_index < 0) {
+    return 0;
+  }
+  size_t byte_index = (size_t)pixel_index >> 3;
+  if (byte_index >= byte_len) {
+    return 0;
+  }
+  int shift = 7 - (pixel_index & 7);
+  uint8_t sample = (uint8_t)((data[byte_index] >> shift) & 0x01);
+  return sample ? 255 : 0;
+}
+
+static inline uint8_t bitmap_tile_pixel_gray_2(const uint8_t* data, size_t byte_len, int pixel_index) {
+  if (!data || pixel_index < 0) {
+    return 0;
+  }
+  size_t byte_index = (size_t)pixel_index >> 2;
+  if (byte_index >= byte_len) {
+    return 0;
+  }
+  int shift = 6 - ((pixel_index & 3) * 2);
+  uint8_t sample = (uint8_t)((data[byte_index] >> shift) & 0x03);
+  return (uint8_t)(sample * 85);
+}
+
+static inline uint8_t bitmap_tile_pixel_gray_4(const uint8_t* data, size_t byte_len, int pixel_index) {
+  if (!data || pixel_index < 0) {
+    return 0;
+  }
+  size_t byte_index = (size_t)pixel_index >> 1;
+  if (byte_index >= byte_len) {
+    return 0;
+  }
+  int shift = (pixel_index & 1) == 0 ? 4 : 0;
+  uint8_t sample = (uint8_t)((data[byte_index] >> shift) & 0x0F);
+  return (uint8_t)(sample * 17);
+}
+
+static inline uint8_t bitmap_tile_pixel_gray_8(const uint8_t* data, size_t byte_len, int pixel_index) {
+  if (!data || pixel_index < 0) {
+    return 0;
+  }
+  size_t byte_index = (size_t)pixel_index;
+  if (byte_index >= byte_len) {
+    return 0;
+  }
+  return data[byte_index];
+}
+
+void node_draw_tileBitmap(Node* node, int tx0, int ty0) {
+  const uint8_t* data = node->u.bitmap.data;
+  if (!data && node->u.bitmap.byte_len > 0) {
+    return;
+  }
+
+  int tx1 = tx0 + TILE_SIZE;
+  int ty1 = ty0 + TILE_SIZE;
+  int bx0 = MAX(node->u.bitmap.x, tx0);
+  int by0 = MAX(node->u.bitmap.y, ty0);
+  int bx1 = MIN(node->u.bitmap.x + node->u.bitmap.w, tx1);
+  int by1 = MIN(node->u.bitmap.y + node->u.bitmap.h, ty1);
+  if (bx1 <= bx0 || by1 <= by0) {
+    return;
+  }
+
+  const size_t byte_len = node->u.bitmap.byte_len;
+  const int bmp_x = node->u.bitmap.x;
+  const int bmp_y = node->u.bitmap.y;
+  const int bmp_w = node->u.bitmap.w;
+
+  switch (node->u.bitmap.bit_depth) {
+    case 1:
+      for (int py = by0; py < by1; ++py) {
+        int src_y = py - bmp_y;
+        for (int px = bx0; px < bx1; ++px) {
+          int pixel_index = src_y * bmp_w + (px - bmp_x);
+          video.dotFast(px, py, bitmap_tile_pixel_gray_1(data, byte_len, pixel_index));
+        }
+      }
+      break;
+    case 2:
+      for (int py = by0; py < by1; ++py) {
+        int src_y = py - bmp_y;
+        for (int px = bx0; px < bx1; ++px) {
+          int pixel_index = src_y * bmp_w + (px - bmp_x);
+          video.dotFast(px, py, bitmap_tile_pixel_gray_2(data, byte_len, pixel_index));
+        }
+      }
+      break;
+    case 4:
+      for (int py = by0; py < by1; ++py) {
+        int src_y = py - bmp_y;
+        for (int px = bx0; px < bx1; ++px) {
+          int pixel_index = src_y * bmp_w + (px - bmp_x);
+          video.dotFast(px, py, bitmap_tile_pixel_gray_4(data, byte_len, pixel_index));
+        }
+      }
+      break;
+    case 8:
+      for (int py = by0; py < by1; ++py) {
+        int src_y = py - bmp_y;
+        for (int px = bx0; px < bx1; ++px) {
+          int pixel_index = src_y * bmp_w + (px - bmp_x);
+          video.dotFast(px, py, bitmap_tile_pixel_gray_8(data, byte_len, pixel_index));
+        }
+      }
+      break;
+    default:
+      complain("node_draw_tileBitmap: unsupported bit depth");
+      break;
   }
 }

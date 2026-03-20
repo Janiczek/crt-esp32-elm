@@ -11,41 +11,24 @@
 #include "prelude.h"
 #include "serial.h"
 
-//----------------------------------------------
-// Serial transport configuration
-
-static const uint8_t PROTOCOL_VERSION = 1;
 static const size_t SERIAL_FRAME_BUFFER_LIMIT = 65539;
 
-enum TransportOpcode : uint8_t {
-  OPCODE_BINARY = 0x2,
-  OPCODE_CLOSE = 0x8,
-  OPCODE_PING = 0x9,
-  OPCODE_PONG = 0xA,
-};
-
-enum FrameType : uint8_t {
-  MSG_GET_ESP32_DATA = 0x01,
-  MSG_ESP32_DATA_BEGIN = 0x02,
-  MSG_SET_ROOT_NODE = 0x03,
-  MSG_ACK = 0x04,
-  MSG_ERROR = 0x06,
-  MSG_ESP32_DATA_CHUNK = 0x07,
-  MSG_ESP32_DATA_END = 0x08,
-};
+typedef enum : uint8_t {
+  APP_FRAME_GET_ESP32_DATA = 0x01,
+  APP_FRAME_ESP32_DATA_BEGIN = 0x02,
+  APP_FRAME_SET_ROOT_NODE = 0x03,
+  APP_FRAME_ACK = 0x04,
+  APP_FRAME_LOG = 0x05,
+  APP_FRAME_ERROR = 0x06,
+  APP_FRAME_ESP32_DATA_CHUNK = 0x07,
+  APP_FRAME_ESP32_DATA_END = 0x08,
+} AppFrameType;
 
 //----------------------------------------------
 // VDOM-specific
 
 static NodePool rootNodePool;
 Node* rootNode = &rootNodePool.nodes[0];
-
-static const size_t ESP32_DATA_CHUNK_SIZE = 4096;
-
-typedef struct {
-  uint8_t buffer[ESP32_DATA_CHUNK_SIZE];
-  size_t len;
-} Esp32DataChunkWriter;
 
 static uint16_t dirtyTileCount = 0; // number of {tx,ty} pairs
 static uint8_t dirtyTiles[TILE_COUNT * 2];
@@ -121,21 +104,22 @@ static bool serialWriteAll(const uint8_t* data, size_t len) {
   return Serial.write(data, len) == len;
 }
 
-static bool sendProtocolFrame(uint8_t frameType, const uint8_t* payload, size_t payloadLen);
+// Transport writes stay here because they depend on Arduino `Serial`.
+static bool sendAppFrame(uint8_t frameType, const uint8_t* payload, size_t payloadLen);
 
-static bool sendSerialFrameRaw(uint8_t opcode, const uint8_t* payload, size_t payloadLen) {
+static bool sendTransportFrame(uint8_t opcode, const uint8_t* payload, size_t payloadLen) {
   uint8_t header[8];
   size_t headerLen = 0;
   if (!write_ws_like_frame_header(header, sizeof(header), opcode, payloadLen, &headerLen)) {
-    complain("sendSerialFrameRaw: payload too large");
+    complain("sendTransportFrame: payload too large");
     return false;
   }
   if (!serialWriteAll(header, headerLen)) {
-    complain("sendSerialFrameRaw: failed to write header");
+    complain("sendTransportFrame: failed to write header");
     return false;
   }
   if (!serialWriteAll(payload, payloadLen)) {
-    complain("sendSerialFrameRaw: failed to write payload");
+    complain("sendTransportFrame: failed to write payload");
     return false;
   }
   Serial.flush();
@@ -157,6 +141,7 @@ void drawTile(int tx0, int ty0) {
       case NODE_XLINE:    node_draw_tileXLine(node, tx0, ty0);    break;
       case NODE_YLINE:    node_draw_tileYLine(node, tx0, ty0);    break;
       case NODE_TEXT:     node_draw_tileText(node, tx0, ty0);     break;
+      case NODE_BITMAP:   node_draw_tileBitmap(node, tx0, ty0);   break;
       case NODE_GROUP:    break; // Nothing to do. We automatically traverse the group contents in the outside loop.
       default:            break;
     }
@@ -192,156 +177,139 @@ static size_t esp32DataPayloadLength() {
   return payloadLen;
 }
 
-static bool flushEsp32DataChunk(Esp32DataChunkWriter* writer) {
-  if (writer->len == 0) {
-    return true;
-  }
-
-  if (!sendProtocolFrame(MSG_ESP32_DATA_CHUNK, writer->buffer, writer->len)) {
-    complain("flushEsp32DataChunk: failed to send chunk");
+static bool flushEsp32DataChunkFrame(void*, const uint8_t* data, size_t len) {
+  if (!sendAppFrame(APP_FRAME_ESP32_DATA_CHUNK, data, len)) {
+    complain("flushEsp32DataChunkFrame: failed to send chunk");
     return false;
   }
-
-  writer->len = 0;
   return true;
 }
 
-static bool writeEsp32DataChunkBytes(Esp32DataChunkWriter* writer, const uint8_t* data, size_t len) {
-  while (len > 0) {
-    if (writer->len == ESP32_DATA_CHUNK_SIZE && !flushEsp32DataChunk(writer)) {
-      return false;
-    }
-
-    size_t available = ESP32_DATA_CHUNK_SIZE - writer->len;
-    size_t copyLen = len < available ? len : available;
-    memcpy(writer->buffer + writer->len, data, copyLen);
-    writer->len += copyLen;
-    data += copyLen;
-    len -= copyLen;
-  }
-
-  return true;
-}
-
-static bool writeEsp32DataChunkU8(Esp32DataChunkWriter* writer, uint8_t value) {
-  return writeEsp32DataChunkBytes(writer, &value, sizeof(value));
-}
-
-static bool writeEsp32DataChunkU16Le(Esp32DataChunkWriter* writer, uint16_t value) {
-  uint8_t bytes[2] = {
-    (uint8_t)(value & 0xff),
-    (uint8_t)((value >> 8) & 0xff),
-  };
-  return writeEsp32DataChunkBytes(writer, bytes, sizeof(bytes));
-}
-
-static bool writeEsp32DataChunkSizedString(Esp32DataChunkWriter* writer, const char* value) {
-  size_t len = strlen(value);
-  if (len > 0xffff) {
-    complain("writeEsp32DataChunkSizedString: string too long");
-    return false;
-  }
-
-  return writeEsp32DataChunkU16Le(writer, (uint16_t)len)
-      && writeEsp32DataChunkBytes(writer, (const uint8_t*)value, len);
-}
-
-static bool writeEsp32DataChunkSizedU8List(Esp32DataChunkWriter* writer, const uint8_t* data, uint16_t count) {
-  return writeEsp32DataChunkU16Le(writer, count)
-      && writeEsp32DataChunkBytes(writer, data, count);
-}
-
-static bool sendEsp32DataFrame() {
-  size_t payloadLen = esp32DataPayloadLength();
-  if (payloadLen > 0xffffffffu) {
-    complain("sendEsp32DataFrame: payload length exceeds protocol limit");
-    return false;
-  }
-
-  size_t chunkCount = (payloadLen + ESP32_DATA_CHUNK_SIZE - 1) / ESP32_DATA_CHUNK_SIZE;
-  if (chunkCount > 0xffff) {
-    complain("sendEsp32DataFrame: chunk count exceeds protocol limit");
-    return false;
-  }
-
-  uint8_t beginPayload[6] = {
-    (uint8_t)(payloadLen & 0xff),
-    (uint8_t)((payloadLen >> 8) & 0xff),
-    (uint8_t)((payloadLen >> 16) & 0xff),
-    (uint8_t)((payloadLen >> 24) & 0xff),
-    (uint8_t)(chunkCount & 0xff),
-    (uint8_t)((chunkCount >> 8) & 0xff),
-  };
-  Esp32DataChunkWriter writer = {};
-
-  if (!sendProtocolFrame(MSG_ESP32_DATA_BEGIN, beginPayload, sizeof(beginPayload))) {
-    complain("sendEsp32DataFrame: failed to write begin frame");
-    return false;
-  }
-
-  if (!writeEsp32DataChunkU16Le(&writer, DISPLAY_W)
-      || !writeEsp32DataChunkU16Le(&writer, DISPLAY_H)
-      || !writeEsp32DataChunkU8(&writer, MY_CRT_PADDING_L)
-      || !writeEsp32DataChunkU8(&writer, MY_CRT_PADDING_R)
-      || !writeEsp32DataChunkU8(&writer, MY_CRT_PADDING_T)
-      || !writeEsp32DataChunkU8(&writer, MY_CRT_PADDING_B)
-      || !writeEsp32DataChunkU16Le(&writer, (uint16_t)MAX_TOTAL_NODES)
-      || !writeEsp32DataChunkU16Le(&writer, (uint16_t)NODE_GROUP_MAX_CHILDREN)
-      || !writeEsp32DataChunkU8(&writer, (uint8_t)TILE_SIZE)
-      || !writeEsp32DataChunkU16Le(&writer, NUM_FONTS)) {
-    complain("sendEsp32DataFrame: failed to write metadata payload");
+// The payload schema is VDOM-specific; `serial.h` only provides byte packing helpers.
+static bool writeEsp32DataPayload(BufferedByteWriter* writer) {
+  if (!buffered_byte_writer_write_u16_le(writer, DISPLAY_W)
+      || !buffered_byte_writer_write_u16_le(writer, DISPLAY_H)
+      || !buffered_byte_writer_write_u8(writer, MY_CRT_PADDING_L)
+      || !buffered_byte_writer_write_u8(writer, MY_CRT_PADDING_R)
+      || !buffered_byte_writer_write_u8(writer, MY_CRT_PADDING_T)
+      || !buffered_byte_writer_write_u8(writer, MY_CRT_PADDING_B)
+      || !buffered_byte_writer_write_u16_le(writer, (uint16_t)MAX_TOTAL_NODES)
+      || !buffered_byte_writer_write_u16_le(writer, (uint16_t)NODE_GROUP_MAX_CHILDREN)
+      || !buffered_byte_writer_write_u8(writer, (uint8_t)TILE_SIZE)
+      || !buffered_byte_writer_write_u16_le(writer, NUM_FONTS)) {
+    complain("writeEsp32DataPayload: failed to write metadata payload");
     return false;
   }
 
   for (int i = 0; i < NUM_FONTS; i++) {
     const FontMono1B* font = fonts[i];
-    if (!writeEsp32DataChunkSizedString(&writer, font->name)
-        || !writeEsp32DataChunkU16Le(&writer, font->ascii_first)
-        || !writeEsp32DataChunkU16Le(&writer, font->ascii_last)
-        || !writeEsp32DataChunkU16Le(&writer, font->num_glyphs)
-        || !writeEsp32DataChunkU8(&writer, font->glyph_w)
-        || !writeEsp32DataChunkU8(&writer, font->glyph_h)
-        || !writeEsp32DataChunkU8(&writer, font->extra_line_height)
-        || !writeEsp32DataChunkSizedU8List(&writer, font->bits, font_bits_byte_len(font))) {
-      complain("sendEsp32DataFrame: failed to write font payload");
+    if (!buffered_byte_writer_write_u16_sized_string(writer, font->name)
+        || !buffered_byte_writer_write_u16_le(writer, font->ascii_first)
+        || !buffered_byte_writer_write_u16_le(writer, font->ascii_last)
+        || !buffered_byte_writer_write_u16_le(writer, font->num_glyphs)
+        || !buffered_byte_writer_write_u8(writer, font->glyph_w)
+        || !buffered_byte_writer_write_u8(writer, font->glyph_h)
+        || !buffered_byte_writer_write_u8(writer, font->extra_line_height)
+        || !buffered_byte_writer_write_u16_sized_bytes(writer, font->bits, font_bits_byte_len(font))) {
+      complain("writeEsp32DataPayload: failed to write font payload");
       return false;
     }
-  }
-
-  if (!flushEsp32DataChunk(&writer)) {
-    complain("sendEsp32DataFrame: failed to flush final chunk");
-    return false;
-  }
-
-  if (!sendProtocolFrame(MSG_ESP32_DATA_END, nullptr, 0)) {
-    complain("sendEsp32DataFrame: failed to write end frame");
-    return false;
   }
 
   return true;
 }
 
-static bool sendProtocolFrame(uint8_t frameType, const uint8_t* payload, size_t payloadLen) {
-  uint8_t prefix[2] = { frameType, PROTOCOL_VERSION };
+static bool streamEsp32DataChunks(
+    uint8_t* rawChunkBuffer,
+    size_t rawChunkBufferCapacity) {
+  BufferedByteWriter writer;
+  buffered_byte_writer_begin(
+      &writer,
+      rawChunkBuffer,
+      rawChunkBufferCapacity,
+      flushEsp32DataChunkFrame,
+      nullptr);
+  return writeEsp32DataPayload(&writer)
+      && buffered_byte_writer_flush(&writer);
+}
+
+static bool sendEsp32DataFrame() {
+  size_t rawPayloadLen = esp32DataPayloadLength();
+  if (rawPayloadLen > 0xffffffffu) {
+    complain("sendEsp32DataFrame: payload length exceeds protocol limit");
+    return false;
+  }
+
+  if (ESP32_DATA_CHUNK_SIZE == 0) {
+    complain("sendEsp32DataFrame: chunk size must be non-zero");
+    return false;
+  }
+
+  uint8_t* rawChunkBuffer = (uint8_t*)malloc(ESP32_DATA_CHUNK_SIZE);
+  if (!rawChunkBuffer) {
+    complain("sendEsp32DataFrame: chunk buffer allocation failed");
+    return false;
+  }
+
+  size_t chunkCount = (rawPayloadLen + ESP32_DATA_CHUNK_SIZE - 1) / ESP32_DATA_CHUNK_SIZE;
+  if (chunkCount > 0xffff) {
+    free(rawChunkBuffer);
+    complain("sendEsp32DataFrame: chunk count exceeds protocol limit");
+    return false;
+  }
+
+  uint8_t beginPayload[6] = {
+    (uint8_t)(rawPayloadLen & 0xff),
+    (uint8_t)((rawPayloadLen >> 8) & 0xff),
+    (uint8_t)((rawPayloadLen >> 16) & 0xff),
+    (uint8_t)((rawPayloadLen >> 24) & 0xff),
+    (uint8_t)(chunkCount & 0xff),
+    (uint8_t)((chunkCount >> 8) & 0xff),
+  };
+
+  if (!sendAppFrame(APP_FRAME_ESP32_DATA_BEGIN, beginPayload, sizeof(beginPayload))) {
+    free(rawChunkBuffer);
+    complain("sendEsp32DataFrame: failed to write begin frame");
+    return false;
+  }
+
+  if (!streamEsp32DataChunks(rawChunkBuffer, ESP32_DATA_CHUNK_SIZE)) {
+    free(rawChunkBuffer);
+    complain("sendEsp32DataFrame: failed to stream raw chunks");
+    return false;
+  }
+
+  if (!sendAppFrame(APP_FRAME_ESP32_DATA_END, nullptr, 0)) {
+    free(rawChunkBuffer);
+    complain("sendEsp32DataFrame: failed to write end frame");
+    return false;
+  }
+
+  free(rawChunkBuffer);
+  return true;
+}
+
+static bool sendAppFrame(uint8_t frameType, const uint8_t* payload, size_t payloadLen) {
+  uint8_t prefix[1] = { frameType };
   uint8_t header[8];
   size_t headerLen = 0;
   size_t frameLen = payloadLen + sizeof(prefix);
 
-  if (!write_ws_like_frame_header(header, sizeof(header), OPCODE_BINARY, frameLen, &headerLen)) {
-    complain("sendProtocolFrame: payload too large");
+  if (!write_ws_like_frame_header(header, sizeof(header), TRANSPORT_OPCODE_BINARY, frameLen, &headerLen)) {
+    complain("sendAppFrame: payload too large");
     return false;
   }
 
   if (!serialWriteAll(header, headerLen)) {
-    complain("sendProtocolFrame: failed to write header");
+    complain("sendAppFrame: failed to write header");
     return false;
   }
   if (!serialWriteAll(prefix, sizeof(prefix))) {
-    complain("sendProtocolFrame: failed to write frame prefix");
+    complain("sendAppFrame: failed to write frame prefix");
     return false;
   }
   if (!serialWriteAll(payload, payloadLen)) {
-    complain("sendProtocolFrame: failed to write frame payload");
+    complain("sendAppFrame: failed to write frame payload");
     return false;
   }
 
@@ -350,7 +318,7 @@ static bool sendProtocolFrame(uint8_t frameType, const uint8_t* payload, size_t 
 }
 
 static bool sendErrorFrame(const char* msg) {
-  return sendProtocolFrame(MSG_ERROR, (const uint8_t*)msg, strlen(msg));
+  return sendAppFrame(APP_FRAME_ERROR, (const uint8_t*)msg, strlen(msg));
 }
 
 static bool installRootNodeFromPayload(const uint8_t* payload, size_t payloadLen) {
@@ -397,32 +365,26 @@ static bool installRootNodeFromPayload(const uint8_t* payload, size_t payloadLen
 }
 
 static bool handleBinaryFrame(const uint8_t* payload, size_t payloadLen) {
-  if (payloadLen < 2) {
+  if (payloadLen < 1) {
     complain("handleBinaryFrame: short frame");
     return sendErrorFrame("short frame");
   }
 
   uint8_t frameType = payload[0];
-  uint8_t version = payload[1];
-  const uint8_t* framePayload = payload + 2;
-  size_t framePayloadLen = payloadLen - 2;
-
-  if (version != PROTOCOL_VERSION) {
-    complain("handleBinaryFrame: unsupported protocol version");
-    return sendErrorFrame("unsupported protocol version");
-  }
+  const uint8_t* framePayload = payload + 1;
+  size_t framePayloadLen = payloadLen - 1;
 
   switch (frameType) {
-    case MSG_GET_ESP32_DATA: {
+    case APP_FRAME_GET_ESP32_DATA: {
       initEmptyRootNode();
       return sendEsp32DataFrame();
     }
 
-    case MSG_SET_ROOT_NODE: {
+    case APP_FRAME_SET_ROOT_NODE: {
       if (!installRootNodeFromPayload(framePayload, framePayloadLen)) {
         return sendErrorFrame("failed to install root node");
       }
-      return sendProtocolFrame(MSG_ACK, nullptr, 0);
+      return sendAppFrame(APP_FRAME_ACK, nullptr, 0);
     }
 
     default:
@@ -433,17 +395,11 @@ static bool handleBinaryFrame(const uint8_t* payload, size_t payloadLen) {
 
 static bool handleTransportFrame(uint8_t opcode, uint8_t* payload, size_t payloadLen) {
   switch (opcode) {
-    case OPCODE_BINARY:
+    case TRANSPORT_OPCODE_BINARY:
       return handleBinaryFrame(payload, payloadLen);
 
-    case OPCODE_CLOSE:
-      return sendSerialFrameRaw(OPCODE_CLOSE, nullptr, 0);
-
-    case OPCODE_PING:
-      return sendSerialFrameRaw(OPCODE_PONG, payload, payloadLen);
-
-    case OPCODE_PONG:
-      return true;
+    case TRANSPORT_OPCODE_CLOSE:
+      return sendTransportFrame(TRANSPORT_OPCODE_CLOSE, nullptr, 0);
 
     default:
       complain("Serial frame: unsupported opcode");

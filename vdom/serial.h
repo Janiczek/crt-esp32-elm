@@ -23,13 +23,117 @@ typedef struct {
   uint8_t mask[4];
 } WsLikeFrame;
 
+typedef enum : uint8_t {
+  TRANSPORT_OPCODE_BINARY = 0x2,
+  TRANSPORT_OPCODE_CLOSE = 0x8,
+} TransportOpcode;
+
 typedef enum {
   WS_LIKE_PARSE_INVALID = 0,
   WS_LIKE_PARSE_NEED_MORE = 1,
   WS_LIKE_PARSE_OK = 2,
 } WsLikeParseStatus;
 
+typedef bool (*BufferedByteWriterFlush)(void* ctx, const uint8_t* data, size_t len);
+
+typedef struct {
+  uint8_t* buffer;
+  size_t len;
+  size_t capacity;
+  BufferedByteWriterFlush flush;
+  void* flush_ctx;
+} BufferedByteWriter;
+
 static ReadBuffer* activeReadBuffer = nullptr;
+
+static inline void buffered_byte_writer_begin(
+    BufferedByteWriter* writer,
+    uint8_t* buffer,
+    size_t capacity,
+    BufferedByteWriterFlush flush,
+    void* flush_ctx) {
+  writer->buffer = buffer;
+  writer->len = 0;
+  writer->capacity = capacity;
+  writer->flush = flush;
+  writer->flush_ctx = flush_ctx;
+}
+
+static inline bool buffered_byte_writer_flush(BufferedByteWriter* writer) {
+  if (!writer || writer->len == 0) {
+    return true;
+  }
+  if (!writer->flush || !writer->flush(writer->flush_ctx, writer->buffer, writer->len)) {
+    return false;
+  }
+  writer->len = 0;
+  return true;
+}
+
+static inline bool buffered_byte_writer_write_bytes(
+    BufferedByteWriter* writer,
+    const uint8_t* data,
+    size_t len) {
+  if (!writer) {
+    return false;
+  }
+  if (len == 0) {
+    return true;
+  }
+  if (!data || !writer->buffer || writer->capacity == 0) {
+    return false;
+  }
+
+  while (len > 0) {
+    if (writer->len == writer->capacity && !buffered_byte_writer_flush(writer)) {
+      return false;
+    }
+
+    size_t available = writer->capacity - writer->len;
+    size_t copy_len = len < available ? len : available;
+    memcpy(writer->buffer + writer->len, data, copy_len);
+    writer->len += copy_len;
+    data += copy_len;
+    len -= copy_len;
+  }
+
+  return true;
+}
+
+static inline bool buffered_byte_writer_write_u8(BufferedByteWriter* writer, uint8_t value) {
+  return buffered_byte_writer_write_bytes(writer, &value, sizeof(value));
+}
+
+static inline bool buffered_byte_writer_write_u16_le(BufferedByteWriter* writer, uint16_t value) {
+  uint8_t bytes[2] = {
+    (uint8_t)(value & 0xff),
+    (uint8_t)((value >> 8) & 0xff),
+  };
+  return buffered_byte_writer_write_bytes(writer, bytes, sizeof(bytes));
+}
+
+static inline bool buffered_byte_writer_write_u16_sized_bytes(
+    BufferedByteWriter* writer,
+    const uint8_t* data,
+    size_t len) {
+  if (len > 0xffff) {
+    return false;
+  }
+  return buffered_byte_writer_write_u16_le(writer, (uint16_t)len)
+      && buffered_byte_writer_write_bytes(writer, data, len);
+}
+
+static inline bool buffered_byte_writer_write_u16_sized_string(
+    BufferedByteWriter* writer,
+    const char* value) {
+  if (!value) {
+    return false;
+  }
+  return buffered_byte_writer_write_u16_sized_bytes(
+      writer,
+      (const uint8_t*)value,
+      strlen(value));
+}
 
 static inline bool write_ws_like_frame_header(
     uint8_t* out,
@@ -166,36 +270,44 @@ static inline uint32_t read_u32_le() { return read_le(4); }
 static inline uint16_t read_u16_le() { return (uint16_t)read_le(2); }
 static inline int32_t read_i32_le() { return (int32_t)read_u32_le(); }
 
-// Zlib-compressed length-prefixed string: u16 decompressed_len, u16 compressed_len, then
-// compressed_len bytes of zlib data. Allocates decompressed_len+1, NUL-terminates. Caller must free.
-static inline char* read_sized_compressed_string(void) {
-  uint16_t decompressed_len = read_u16_le();
-  uint16_t compressed_len = read_u16_le();
+static inline uint8_t* read_zlib_bytes(uint16_t compressed_len, size_t decompressed_len, bool nul_terminate) {
   if (decompressed_len == 0) {
-    char* buf = (char*)malloc(1);
+    if (compressed_len != 0) {
+      complain("read_zlib_bytes: non-zero compressed length for empty payload");
+      activeReadBuffer->ok = false;
+    }
+    if (!nul_terminate) {
+      return nullptr;
+    }
+    uint8_t* buf = (uint8_t*)malloc(1);
     if (!buf) {
-      complain("read_sized_compressed_string: malloc failed for empty string");
+      complain("read_zlib_bytes: malloc failed for empty payload");
       return nullptr;
     }
     buf[0] = '\0';
     return buf;
   }
-  uint8_t* inbuf = (uint8_t*)malloc(compressed_len);
-  if (!inbuf) {
-    complain("read_sized_compressed_string: malloc inbuf failed");
+  if (compressed_len == 0) {
+    complain("read_zlib_bytes: compressed length is zero for non-empty payload");
+    activeReadBuffer->ok = false;
     return nullptr;
   }
   if (read_buffer_remaining() < compressed_len) {
-    complain("read_sized_compressed_string: buffer underrun");
+    complain("read_zlib_bytes: buffer underrun");
     activeReadBuffer->ok = false;
-    free(inbuf);
+    return nullptr;
+  }
+  uint8_t* inbuf = (uint8_t*)malloc(compressed_len);
+  if (!inbuf) {
+    complain("read_zlib_bytes: malloc inbuf failed");
     return nullptr;
   }
   memcpy(inbuf, activeReadBuffer->data + activeReadBuffer->offset, compressed_len);
   activeReadBuffer->offset += compressed_len;
-  char* outbuf = (char*)malloc((size_t)decompressed_len + 1);
+  size_t outcap = decompressed_len + (nul_terminate ? 1 : 0);
+  uint8_t* outbuf = (uint8_t*)malloc(outcap);
   if (!outbuf) {
-    complain("read_sized_compressed_string: malloc outbuf failed");
+    complain("read_zlib_bytes: malloc outbuf failed");
     free(inbuf);
     return nullptr;
   }
@@ -214,13 +326,37 @@ static inline char* read_sized_compressed_string(void) {
     if (st == TINFL_STATUS_DONE)
       break;
     if (st < TINFL_STATUS_DONE) {
-      complain("read_sized_compressed_string: tinfl_decompress failed");
+      complain("read_zlib_bytes: tinfl_decompress failed");
       free(inbuf);
       free(outbuf);
       return nullptr;
     }
   }
   free(inbuf);
-  outbuf[decompressed_len] = '\0';
+  if (outpos != decompressed_len) {
+    complain("read_zlib_bytes: decompressed length mismatch");
+    free(outbuf);
+    return nullptr;
+  }
+  if (nul_terminate) {
+    outbuf[decompressed_len] = '\0';
+  }
   return outbuf;
+}
+
+// Zlib-compressed length-prefixed byte buffer: u16 decompressed_len, u16 compressed_len,
+// then compressed_len bytes of zlib data.
+static inline bool read_sized_compressed_bytes_header(uint16_t* decompressed_len_out,
+                                                      uint16_t* compressed_len_out) {
+  *decompressed_len_out = read_u16_le();
+  *compressed_len_out = read_u16_le();
+  return activeReadBuffer->ok;
+}
+
+// Zlib-compressed length-prefixed string: u16 decompressed_len, u16 compressed_len, then
+// compressed_len bytes of zlib data. Allocates decompressed_len+1, NUL-terminates. Caller must free.
+static inline char* read_sized_compressed_string(void) {
+  uint16_t decompressed_len = read_u16_le();
+  uint16_t compressed_len = read_u16_le();
+  return (char*)read_zlib_bytes(compressed_len, decompressed_len, true);
 }

@@ -4,13 +4,10 @@ const app = Elm.Main.init({
 
 const SERIAL_BAUD_RATE = 115200
 const SERIAL_BUFFER_SIZE = 65536
-const PROTOCOL_VERSION = 1
 
 const TRANSPORT_OPCODES = {
     BINARY: 0x2,
     CLOSE: 0x8,
-    PING: 0x9,
-    PONG: 0xA,
 }
 
 const FRAME_TYPES = {
@@ -28,8 +25,6 @@ const VALID_FRAME_TYPES = new Set(Object.values(FRAME_TYPES))
 const VALID_TRANSPORT_START_BYTES = new Set([
     0x80 | TRANSPORT_OPCODES.BINARY,
     0x80 | TRANSPORT_OPCODES.CLOSE,
-    0x80 | TRANSPORT_OPCODES.PING,
-    0x80 | TRANSPORT_OPCODES.PONG,
 ])
 
 const textDecoder = new TextDecoder()
@@ -40,10 +35,6 @@ function transportOpcodeName(opcode) {
             return 'BINARY'
         case TRANSPORT_OPCODES.CLOSE:
             return 'CLOSE'
-        case TRANSPORT_OPCODES.PING:
-            return 'PING'
-        case TRANSPORT_OPCODES.PONG:
-            return 'PONG'
         default:
             return `UNKNOWN(${opcode})`
     }
@@ -113,15 +104,19 @@ function beginEsp32DataHandshake(payload) {
     if (pendingEsp32Data !== null) {
         throw new Error('Received nested ESP32 data handshake')
     }
-    if (payload.length !== 4 && payload.length !== 6) {
+
+    let expectedTotalBytes
+    let expectedChunkCount
+
+    if (payload.length !== 6) {
         throw new Error('Invalid ESP32 data begin payload')
     }
 
-    const totalBytes = parseUint32Le(payload, 0)
-    const expectedChunkCount = payload.length >= 6 ? parseUint16Le(payload, 4) : null
+    expectedTotalBytes = parseUint32Le(payload, 0)
+    expectedChunkCount = parseUint16Le(payload, 4)
 
     pendingEsp32Data = {
-        expectedTotalBytes: totalBytes,
+        expectedTotalBytes,
         expectedChunkCount,
         chunks: [],
         receivedBytes: 0,
@@ -131,12 +126,12 @@ function beginEsp32DataHandshake(payload) {
     if (expectedChunkCount !== null) {
         app.ports.onInitialLoadChunkCount.send({
             expectedChunkCount,
-            expectedTotalBytes: totalBytes,
+            expectedTotalBytes,
         })
     }
 
     debugSerial('[JS reader] ESP32_DATA begin', {
-        totalBytes,
+        expectedTotalBytes,
         expectedChunkCount,
     })
 }
@@ -165,7 +160,7 @@ function appendEsp32DataChunk(payload) {
     })
 }
 
-function finishEsp32DataHandshake() {
+async function finishEsp32DataHandshake() {
     if (pendingEsp32Data === null) {
         throw new Error('Received ESP32 data end before begin')
     }
@@ -181,6 +176,7 @@ function finishEsp32DataHandshake() {
         throw new Error('ESP32 data chunk count mismatch')
     }
 
+    const transferredBytes = pendingEsp32Data.receivedBytes
     const payload = new Uint8Array(pendingEsp32Data.expectedTotalBytes)
     let offset = 0
     for (const chunk of pendingEsp32Data.chunks) {
@@ -191,16 +187,18 @@ function finishEsp32DataHandshake() {
     pendingEsp32Data = null
     hasCompletedHandshake = true
     debugSerial('[JS reader] ESP32_DATA complete', {
+        transferredBytes,
         totalBytes: payload.length,
     })
-    app.ports.onConnectSuccessful.send(new DataView(payload.buffer))
+    app.ports.onConnectSuccessful.send(
+        new DataView(payload.buffer, payload.byteOffset, payload.byteLength)
+    )
 }
 
 function makeFrame(frameType, payload) {
-    const frame = new Uint8Array(2 + payload.length)
+    const frame = new Uint8Array(1 + payload.length)
     frame[0] = frameType
-    frame[1] = PROTOCOL_VERSION
-    frame.set(payload, 2)
+    frame.set(payload, 1)
     return frame
 }
 
@@ -272,7 +270,7 @@ function isKnownAppFrameType(frameType) {
 }
 
 function isValidBinaryPayload(payload) {
-    return payload.length >= 2 && payload[1] === PROTOCOL_VERSION && isKnownAppFrameType(payload[0])
+    return payload.length >= 1 && isKnownAppFrameType(payload[0])
 }
 
 function findTransportFrameStart(buffer) {
@@ -297,9 +295,7 @@ function tryParseTransportFrame(buffer) {
     const opcode = firstByte & 0x0f
     if (
         opcode !== TRANSPORT_OPCODES.BINARY &&
-        opcode !== TRANSPORT_OPCODES.CLOSE &&
-        opcode !== TRANSPORT_OPCODES.PING &&
-        opcode !== TRANSPORT_OPCODES.PONG
+        opcode !== TRANSPORT_OPCODES.CLOSE
     ) {
         return { status: 'invalid' }
     }
@@ -351,24 +347,19 @@ function closeAndReportFailure(message) {
     }
 }
 
-function handleIncomingFrame(data) {
+async function handleIncomingFrame(data) {
     const frame = data instanceof Uint8Array ? data : new Uint8Array(data)
-    if (frame.length < 2) {
+    if (frame.length < 1) {
         throw new Error('Received short frame')
     }
 
     const frameType = frame[0];
-    const version = frame[1];
-    const payload = frame.subarray(2);
+    const payload = frame.subarray(1);
 
     debugSerial('[JS reader] incoming app frame', {
         frameType: frameTypeName(frameType),
         payloadBytes: payload.length,
     })
-
-    if (version !== PROTOCOL_VERSION) {
-        throw new Error(`Unsupported protocol version: ${version}`);
-    }
 
     switch (frameType) {
         case FRAME_TYPES.ESP32_DATA_BEGIN: {
@@ -382,7 +373,7 @@ function handleIncomingFrame(data) {
         }
 
         case FRAME_TYPES.ESP32_DATA_END: {
-            finishEsp32DataHandshake()
+            await finishEsp32DataHandshake()
             break;
         }
 
@@ -429,7 +420,7 @@ async function sendAppFrame(frameType, payload) {
     await writeTransportFrame(TRANSPORT_OPCODES.BINARY, makeFrame(frameType, payload))
 }
 
-function processTransportReadBuffer() {
+async function processTransportReadBuffer() {
     for (;;) {
         if (transportReadBuffer.length === 0) {
             return
@@ -468,19 +459,12 @@ function processTransportReadBuffer() {
             })
             switch (parsed.opcode) {
                 case TRANSPORT_OPCODES.BINARY:
-                    handleIncomingFrame(parsed.payload)
+                    await handleIncomingFrame(parsed.payload)
                     break
 
                 case TRANSPORT_OPCODES.CLOSE:
                     closeAndReportFailure('ESP32 closed the serial transport')
                     return
-
-                case TRANSPORT_OPCODES.PING:
-                    void writeTransportFrame(TRANSPORT_OPCODES.PONG, parsed.payload)
-                    break
-
-                case TRANSPORT_OPCODES.PONG:
-                    break
 
                 default:
                     throw new Error(`Unknown transport opcode: ${parsed.opcode}`)
@@ -568,7 +552,7 @@ async function startReadLoop(port) {
             // Too much logging:
             // debugSerial('[JS reader] read bytes from serial', { chunkBytes: value.length })
             transportReadBuffer = appendBytes(transportReadBuffer, value)
-            processTransportReadBuffer()
+            await processTransportReadBuffer()
         }
     } catch (e) {
         if (serialPort === port && !explicitDisconnectRequested) {

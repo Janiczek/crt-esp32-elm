@@ -1,6 +1,23 @@
-module Node exposing (Node, Type(..), empty, encoder, fromKeyAndType, group, jsonDecoder, jsonEncoder, rect, rectFill, text, xLine, yLine)
+module Node exposing
+    ( Node
+    , Type(..)
+    , bitmap
+    , bytesEncoder
+    , empty
+    , fromKeyAndType
+    , group
+    , jsonDecoder
+    , jsonEncoder
+    , rect
+    , rectFill
+    , text
+    , xLine
+    , yLine
+    )
 
+import Bitwise
 import BoundingBox exposing (BoundingBox)
+import Bitmap exposing (BitDepth)
 import Bytes exposing (Endianness(..))
 import Bytes.Encode
 import BytesExtraExtra
@@ -8,8 +25,9 @@ import Color exposing (Color)
 import FNV1a
 import Flate
 import Font exposing (Font)
-import Json.Decode as Decode exposing (Decoder)
-import Json.Encode as Encode
+import Json.Decode exposing (Decoder)
+import Json.Decode.Extra
+import Json.Encode
 import List.Extra
 
 
@@ -21,12 +39,14 @@ type alias Node =
     }
 
 
+
 type Type
     = Rect { x : Int, y : Int, w : Int, h : Int, color : Color }
     | RectFill { x : Int, y : Int, w : Int, h : Int, color : Color }
     | XLine { x : Int, y : Int, len : Int, color : Color }
     | YLine { x : Int, y : Int, len : Int, color : Color }
     | Text { x : Int, y : Int, text : String, fontIndex : Int, color : Color }
+    | Bitmap { x : Int, y : Int, w : Int, h : Int, bitDepth : BitDepth, data : List Int }
     | Group { children : List Node }
 
 
@@ -47,6 +67,9 @@ typeTag type_ =
 
         Text _ ->
             4
+
+        Bitmap _ ->
+            6
 
         Group _ ->
             5
@@ -75,6 +98,20 @@ xLine =
 yLine : String -> { x : Int, y : Int, len : Int, color : Color } -> Node
 yLine =
     node YLine []
+
+
+bitmap : String -> { x : Int, y : Int, w : Int, h : Int, bitDepth : BitDepth, data : List Int } -> Node
+bitmap key config =
+    let
+        expectedLen =
+            Bitmap.packedByteLength config.w config.h config.bitDepth
+    in
+    node Bitmap
+        []
+        key
+        { config
+            | data = normalizeBitmapData expectedLen config.data
+        }
 
 
 group : String -> List Node -> Node
@@ -137,6 +174,21 @@ textMultilineSize font s =
            )
 
 
+
+
+normalizeBitmapData : Int -> List Int -> List Int
+normalizeBitmapData expectedLen data =
+    let
+        normalized =
+            data
+                |> List.map (Bitwise.and 0xFF)
+                |> List.take expectedLen
+    in
+    normalized
+        ++ -- padding the rest of the data to the expected w * h
+           List.repeat (expectedLen - List.length normalized) 0
+
+
 {-| Bounding box for the node. Groups union children bboxes; text uses font metrics.
 -}
 bbox : List Font -> Node -> BoundingBox
@@ -190,6 +242,13 @@ bbox fonts node_ =
                     , w = w
                     , h = h
                     }
+
+        Bitmap r ->
+            { x = r.x
+            , y = r.y
+            , w = max 0 r.w
+            , h = max 0 r.h
+            }
 
         Group r ->
             List.foldl
@@ -246,6 +305,15 @@ hash node_ =
                 |> FNV1a.updateInt8 r.fontIndex
                 |> FNV1a.updateString r.text
 
+        Bitmap r ->
+            seed
+                |> FNV1a.updateInt16 r.x
+                |> FNV1a.updateInt16 r.y
+                |> FNV1a.updateInt16 r.w
+                |> FNV1a.updateInt16 r.h
+                |> FNV1a.updateInt8 (Bitmap.bitDepthToInt r.bitDepth)
+                |> FNV1a.updateBytes r.data
+
         Group r ->
             List.foldl (\c acc -> FNV1a.updateInt32 (hash c) acc) seed r.children
 
@@ -280,141 +348,188 @@ fromKeyAndType fonts key type_ =
         Text r ->
             text fonts key r
 
+        Bitmap r ->
+            bitmap key r
+
         Group { children } ->
             group key children
 
 
-jsonEncoder : Node -> Encode.Value
+jsonEncoder : Node -> Json.Encode.Value
 jsonEncoder node_ =
     let
         base tag extra =
-            Encode.object
-                (( "type", Encode.string tag )
-                    :: ( "key", Encode.string node_.key )
-                    :: extra
-                )
+            Json.Encode.object <|
+                List.concat
+                    [ [ ( "type", Json.Encode.string tag )
+                      , ( "key", Json.Encode.string node_.key )
+                      ]
+                    , extra
+                    ]
     in
     case node_.type_ of
         Rect r ->
             base "Rect"
-                [ ( "x", Encode.int r.x )
-                , ( "y", Encode.int r.y )
-                , ( "w", Encode.int r.w )
-                , ( "h", Encode.int r.h )
-                , ( "color", Encode.int r.color )
+                [ ( "x", Json.Encode.int r.x )
+                , ( "y", Json.Encode.int r.y )
+                , ( "w", Json.Encode.int r.w )
+                , ( "h", Json.Encode.int r.h )
+                , ( "color", Json.Encode.int r.color )
                 ]
 
         RectFill r ->
             base "RectFill"
-                [ ( "x", Encode.int r.x )
-                , ( "y", Encode.int r.y )
-                , ( "w", Encode.int r.w )
-                , ( "h", Encode.int r.h )
-                , ( "color", Encode.int r.color )
+                [ ( "x", Json.Encode.int r.x )
+                , ( "y", Json.Encode.int r.y )
+                , ( "w", Json.Encode.int r.w )
+                , ( "h", Json.Encode.int r.h )
+                , ( "color", Json.Encode.int r.color )
                 ]
 
         XLine r ->
             base "XLine"
-                [ ( "x", Encode.int r.x )
-                , ( "y", Encode.int r.y )
-                , ( "len", Encode.int r.len )
-                , ( "color", Encode.int r.color )
+                [ ( "x", Json.Encode.int r.x )
+                , ( "y", Json.Encode.int r.y )
+                , ( "len", Json.Encode.int r.len )
+                , ( "color", Json.Encode.int r.color )
                 ]
 
         YLine r ->
             base "YLine"
-                [ ( "x", Encode.int r.x )
-                , ( "y", Encode.int r.y )
-                , ( "len", Encode.int r.len )
-                , ( "color", Encode.int r.color )
+                [ ( "x", Json.Encode.int r.x )
+                , ( "y", Json.Encode.int r.y )
+                , ( "len", Json.Encode.int r.len )
+                , ( "color", Json.Encode.int r.color )
                 ]
 
         Text r ->
             base "Text"
-                [ ( "x", Encode.int r.x )
-                , ( "y", Encode.int r.y )
-                , ( "text", Encode.string r.text )
-                , ( "fontIndex", Encode.int r.fontIndex )
-                , ( "color", Encode.int r.color )
+                [ ( "x", Json.Encode.int r.x )
+                , ( "y", Json.Encode.int r.y )
+                , ( "text", Json.Encode.string r.text )
+                , ( "fontIndex", Json.Encode.int r.fontIndex )
+                , ( "color", Json.Encode.int r.color )
+                ]
+
+        Bitmap r ->
+            base "Bitmap"
+                [ ( "x", Json.Encode.int r.x )
+                , ( "y", Json.Encode.int r.y )
+                , ( "w", Json.Encode.int r.w )
+                , ( "h", Json.Encode.int r.h )
+                , ( "bitDepth", Json.Encode.int (Bitmap.bitDepthToInt r.bitDepth) )
+                , ( "data", Json.Encode.list Json.Encode.int r.data )
                 ]
 
         Group r ->
             base "Group"
-                [ ( "children", Encode.list jsonEncoder r.children )
+                [ ( "children", Json.Encode.list jsonEncoder r.children )
                 ]
 
 
 jsonDecoder : List Font -> Decoder Node
 jsonDecoder fonts =
-    Decode.field "type" Decode.string
-        |> Decode.andThen
+    Json.Decode.field "type" Json.Decode.string
+        |> Json.Decode.andThen
             (\tag ->
                 case tag of
                     "Rect" ->
-                        Decode.map2 (\key r -> rect key r)
-                            (Decode.field "key" Decode.string)
-                            (Decode.map5 (\x y w h color -> { x = x, y = y, w = w, h = h, color = color })
-                                (Decode.field "x" Decode.int)
-                                (Decode.field "y" Decode.int)
-                                (Decode.field "w" Decode.int)
-                                (Decode.field "h" Decode.int)
-                                (Decode.field "color" Decode.int)
-                            )
+                        Json.Decode.succeed
+                            (\key x y w h color -> rect key { x = x, y = y, w = w, h = h, color = color })
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "key" Json.Decode.string)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "x" Json.Decode.int)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "y" Json.Decode.int)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "w" Json.Decode.int)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "h" Json.Decode.int)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "color" Json.Decode.int)
 
                     "RectFill" ->
-                        Decode.map2 (\key r -> rectFill key r)
-                            (Decode.field "key" Decode.string)
-                            (Decode.map5 (\x y w h color -> { x = x, y = y, w = w, h = h, color = color })
-                                (Decode.field "x" Decode.int)
-                                (Decode.field "y" Decode.int)
-                                (Decode.field "w" Decode.int)
-                                (Decode.field "h" Decode.int)
-                                (Decode.field "color" Decode.int)
-                            )
+                        Json.Decode.succeed
+                            (\key x y w h color -> rectFill key { x = x, y = y, w = w, h = h, color = color })
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "key" Json.Decode.string)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "x" Json.Decode.int)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "y" Json.Decode.int)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "w" Json.Decode.int)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "h" Json.Decode.int)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "color" Json.Decode.int)
 
                     "XLine" ->
-                        Decode.map2 (\key r -> xLine key r)
-                            (Decode.field "key" Decode.string)
-                            (Decode.map4 (\x y len color -> { x = x, y = y, len = len, color = color })
-                                (Decode.field "x" Decode.int)
-                                (Decode.field "y" Decode.int)
-                                (Decode.field "len" Decode.int)
-                                (Decode.field "color" Decode.int)
-                            )
+                        Json.Decode.succeed
+                            (\key x y len color -> xLine key { x = x, y = y, len = len, color = color })
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "key" Json.Decode.string)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "x" Json.Decode.int)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "y" Json.Decode.int)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "len" Json.Decode.int)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "color" Json.Decode.int)
 
                     "YLine" ->
-                        Decode.map2 (\key r -> yLine key r)
-                            (Decode.field "key" Decode.string)
-                            (Decode.map4 (\x y len color -> { x = x, y = y, len = len, color = color })
-                                (Decode.field "x" Decode.int)
-                                (Decode.field "y" Decode.int)
-                                (Decode.field "len" Decode.int)
-                                (Decode.field "color" Decode.int)
-                            )
+                        Json.Decode.succeed
+                            (\key x y len color -> yLine key { x = x, y = y, len = len, color = color })
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "key" Json.Decode.string)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "x" Json.Decode.int)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "y" Json.Decode.int)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "len" Json.Decode.int)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "color" Json.Decode.int)
 
                     "Text" ->
-                        Decode.map2 (\key r -> text fonts key r)
-                            (Decode.field "key" Decode.string)
-                            (Decode.map5 (\x y t fontIndex color -> { x = x, y = y, text = t, fontIndex = fontIndex, color = color })
-                                (Decode.field "x" Decode.int)
-                                (Decode.field "y" Decode.int)
-                                (Decode.field "text" Decode.string)
-                                (Decode.field "fontIndex" Decode.int)
-                                (Decode.field "color" Decode.int)
-                            )
+                        Json.Decode.succeed
+                            (\key x y t fontIndex color -> text fonts key { x = x, y = y, text = t, fontIndex = fontIndex, color = color })
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "key" Json.Decode.string)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "x" Json.Decode.int)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "y" Json.Decode.int)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "text" Json.Decode.string)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "fontIndex" Json.Decode.int)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "color" Json.Decode.int)
+
+                    "Bitmap" ->
+                        Json.Decode.succeed (\key x y w h bitDepth data -> bitmap key { x = x, y = y, w = w, h = h, bitDepth = bitDepth, data = data })
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "key" Json.Decode.string)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "x" (nonnegativeIntDecoder "x"))
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "y" (nonnegativeIntDecoder "y"))
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "w" (nonnegativeIntDecoder "w"))
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "h" (nonnegativeIntDecoder "h"))
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "bitDepth" bitDepthDecoder)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "data" (Json.Decode.list Json.Decode.int))
 
                     "Group" ->
-                        Decode.map2 (\key children -> group key children)
-                            (Decode.field "key" Decode.string)
-                            (Decode.field "children" (Decode.list (Decode.lazy (\_ -> jsonDecoder fonts))))
+                        Json.Decode.succeed group
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "key" Json.Decode.string)
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "children" (Json.Decode.list (Json.Decode.lazy (\_ -> jsonDecoder fonts))))
 
                     _ ->
-                        Decode.fail ("Unknown node type: " ++ tag)
+                        Json.Decode.fail ("Unknown node type: " ++ tag)
             )
 
 
-encoder : Node -> Bytes.Encode.Encoder
-encoder node_ =
+nonnegativeIntDecoder : String -> Decoder Int
+nonnegativeIntDecoder label =
+    Json.Decode.int
+        |> Json.Decode.andThen
+            (\n ->
+                if n < 0 then
+                    Json.Decode.fail (label ++ " must be nonnegative")
+
+                else
+                    Json.Decode.succeed n
+            )
+
+
+bitDepthDecoder : Decoder BitDepth
+bitDepthDecoder =
+    Json.Decode.int
+        |> Json.Decode.andThen
+            (\i ->
+                case Bitmap.bitDepthFromInt i of
+                    Just d ->
+                        Json.Decode.succeed d
+
+                    Nothing ->
+                        Json.Decode.fail ("Unsupported bitmap bitDepth: " ++ String.fromInt i)
+            )
+
+
+bytesEncoder : Node -> Bytes.Encode.Encoder
+bytesEncoder node_ =
     Bytes.Encode.sequence <|
         (Bytes.Encode.unsignedInt8 (typeTag node_.type_)
             :: (case node_.type_ of
@@ -449,41 +564,27 @@ encoder node_ =
                         ]
 
                     Text r ->
-                        let
-                            raw =
-                                Bytes.Encode.encode (Bytes.Encode.string r.text)
-
-                            decompressedLen =
-                                Bytes.width raw
-
-                            textPayload =
-                                if decompressedLen == 0 then
-                                    [ Bytes.Encode.unsignedInt16 LE 0
-                                    , Bytes.Encode.unsignedInt16 LE 0
-                                    ]
-
-                                else
-                                    let
-                                        compressed =
-                                            Flate.deflateZlib raw
-
-                                        compressedLen =
-                                            Bytes.width compressed
-                                    in
-                                    [ Bytes.Encode.unsignedInt16 LE decompressedLen
-                                    , Bytes.Encode.unsignedInt16 LE compressedLen
-                                    , Bytes.Encode.bytes compressed
-                                    ]
-                        in
                         [ Bytes.Encode.signedInt32 LE r.x
                         , Bytes.Encode.signedInt32 LE r.y
                         , Bytes.Encode.signedInt32 LE r.fontIndex
                         , Bytes.Encode.unsignedInt8 r.color
+                        , BytesExtraExtra.compressedEncoder (Bytes.Encode.string r.text)
                         ]
-                            ++ textPayload
+
+                    Bitmap r ->
+                        [ Bytes.Encode.signedInt32 LE r.x
+                        , Bytes.Encode.signedInt32 LE r.y
+                        , Bytes.Encode.signedInt32 LE r.w
+                        , Bytes.Encode.signedInt32 LE r.h
+                        , Bytes.Encode.unsignedInt8 (Bitmap.bitDepthToInt r.bitDepth)
+                        , BytesExtraExtra.compressedEncoder
+                            (Bytes.Encode.sequence
+                                (List.map Bytes.Encode.unsignedInt8 r.data)
+                            )
+                        ]
 
                     Group r ->
-                        [ BytesExtraExtra.sizedListEncoder encoder r.children
+                        [ BytesExtraExtra.sizedListEncoder bytesEncoder r.children
                         ]
                )
         )

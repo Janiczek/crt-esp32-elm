@@ -19,3 +19,10 @@ cc -o pcf2carray pcf2carray.c
 - **pcf2carray** — PCF (Portable Compiled Format): `./pcf2carray input.pcf output.h`
 
 All tools produce ASCII 32–126 (95 glyphs), monospace, glyph width ≤ 8.
+
+## Bitmap image tools
+
+- `pgm_quantize input.pgm [1|2|4] output.pgm`
+- `image_to_elm.sh bd8_64_64_duke.png --bit-depth 8 > output.elm`
+
+Use these together with `magick input.png output.pgm` and `magick image.png -format "%k\n" info:`

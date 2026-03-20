@@ -276,7 +276,7 @@ suite =
                     Dirty.allTextCells_TEST row col (String.toList charsWithPrefix)
                         |> List.sort
                         |> List.drop 3
-                        |> List.map (\( r, c, char ) -> ( r, c ))
+                        |> List.map (\( r, c, _ ) -> ( r, c ))
                         |> Expect.equalLists
                             (Dirty.allTextCells_TEST row col (String.toList chars)
                                 |> List.sort

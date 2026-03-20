@@ -17,8 +17,10 @@ inline void yLine(int y0, int y1, int x, uint8_t color)
 		}
 		if (y0 < 0)
 			y0 = 0;
-		if (y1 > video.yres)
-			y1 = video.yres;
-		for (int y = y0; y < y1; y++)
+		if (y1 >= video.yres)
+			y1 = video.yres - 1;
+		if (y0 > y1)
+			return;
+		for (int y = y0; y <= y1; y++)
 			video.dotFast(x, y, color);
 	}

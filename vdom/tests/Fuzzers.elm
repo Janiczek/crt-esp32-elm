@@ -1,7 +1,8 @@
-module Fuzzers exposing (color, node, bbox)
+module Fuzzers exposing (bbox, bitDepth, color, node)
 
-import Color exposing (Color)
+import Bitmap exposing (BitDepth(..))
 import BoundingBox exposing (BoundingBox)
+import Color exposing (Color)
 import Fuzz exposing (Fuzzer)
 import Node exposing (Node)
 
@@ -14,6 +15,7 @@ color =
         , Fuzz.constant Color.white
         ]
 
+
 bbox : Fuzzer BoundingBox
 bbox =
     Fuzz.map4 (\x y w h -> { x = x, y = y, w = w, h = h })
@@ -21,6 +23,7 @@ bbox =
         Fuzz.int
         (Fuzz.intRange 1 500)
         (Fuzz.intRange 1 500)
+
 
 node : Fuzzer Node
 node =
@@ -33,6 +36,16 @@ asciiString =
         |> Fuzz.listOfLengthBetween 0 60
         |> Fuzz.listOfLengthBetween 0 24
         |> Fuzz.map (List.map String.fromList >> String.join "\n")
+
+
+bitDepth : Fuzzer BitDepth
+bitDepth =
+    Fuzz.oneOf
+        [ Fuzz.constant BitDepth1
+        , Fuzz.constant BitDepth2
+        , Fuzz.constant BitDepth4
+        , Fuzz.constant BitDepth8
+        ]
 
 
 node_ : Int -> Fuzzer Node
@@ -70,6 +83,27 @@ node_ maxDepth =
             Fuzz.int
             color
             asciiString
+    , Just <|
+        Fuzz.map5
+            (\x y w h bd ->
+                let
+                    byteLen =
+                        ((w * h * Bitmap.bitDepthToInt bd) + 7) // 8
+                in
+                Node.bitmap "bm"
+                    { x = x
+                    , y = y
+                    , w = w
+                    , h = h
+                    , bitDepth = bd
+                    , data = List.repeat byteLen 255
+                    }
+            )
+            (Fuzz.intRange 0 64)
+            (Fuzz.intRange 0 64)
+            (Fuzz.intRange 0 32)
+            (Fuzz.intRange 0 32)
+            bitDepth
     , if maxDepth == 0 then
         Nothing
 
