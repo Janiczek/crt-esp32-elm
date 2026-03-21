@@ -1,5 +1,6 @@
-module Font exposing (Font, decoder)
+module Font exposing (Font, decoder, renderGlyphPixel)
 
+import Bitwise
 import Bytes exposing (Endianness(..))
 import Bytes.Decode
 import Bytes.Decode.Extra
@@ -29,3 +30,21 @@ decoder =
         |> Bytes.Decode.Extra.andMap Bytes.Decode.unsignedInt8
         |> Bytes.Decode.Extra.andMap Bytes.Decode.unsignedInt8
         |> Bytes.Decode.Extra.andMap (BytesExtraExtra.sizedListDecoder Bytes.Decode.unsignedInt8)
+
+
+renderGlyphPixel : Font -> Int -> Int -> Int -> Bool
+renderGlyphPixel font g row col =
+    let
+        byteIdx =
+            g * font.glyphHeight + row
+
+        byte =
+            font.bits
+                |> List.drop byteIdx
+                |> List.head
+                |> Maybe.withDefault 0
+
+        bit =
+            Bitwise.and (Bitwise.shiftRightBy (7 - col) byte) 1
+    in
+    bit == 1

@@ -1,9 +1,9 @@
 module BytesExtraExtra exposing
-    ( sizedListDecoder
+    ( compressedEncoder
+    , sizedListDecoder
     , sizedListEncoder
     , sizedStringDecoder
     , sizedStringEncoder
-    , compressedEncoder
     )
 
 import Bytes exposing (Endianness(..))
@@ -33,7 +33,6 @@ sizedStringEncoder s =
         ]
 
 
-
 sizedListEncoder : (a -> Bytes.Encode.Encoder) -> List a -> Bytes.Encode.Encoder
 sizedListEncoder childEncoder xs =
     Bytes.Encode.sequence
@@ -41,20 +40,21 @@ sizedListEncoder childEncoder xs =
         , Bytes.Encode.sequence (List.map childEncoder xs)
         ]
 
+
 compressedEncoder : Bytes.Encode.Encoder -> Bytes.Encode.Encoder
 compressedEncoder encoder =
     let
         raw =
-            Bytes.Encode.encode (encoder)
+            Bytes.Encode.encode encoder
 
         decompressedLen =
             Bytes.width raw
     in
     if decompressedLen == 0 then
         Bytes.Encode.sequence
-        [ Bytes.Encode.unsignedInt16 LE 0
-        , Bytes.Encode.unsignedInt16 LE 0
-        ]
+            [ Bytes.Encode.unsignedInt16 LE 0
+            , Bytes.Encode.unsignedInt16 LE 0
+            ]
 
     else
         let
@@ -65,7 +65,7 @@ compressedEncoder encoder =
                 Bytes.width compressed
         in
         Bytes.Encode.sequence
-        [ Bytes.Encode.unsignedInt16 LE decompressedLen
-        , Bytes.Encode.unsignedInt16 LE compressedLen
-        , Bytes.Encode.bytes compressed
-        ]
+            [ Bytes.Encode.unsignedInt16 LE decompressedLen
+            , Bytes.Encode.unsignedInt16 LE compressedLen
+            , Bytes.Encode.bytes compressed
+            ]

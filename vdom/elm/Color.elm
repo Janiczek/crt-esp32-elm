@@ -1,4 +1,4 @@
-module Color exposing (Color, black, gray, white)
+module Color exposing (Color, black, gray, toCss, white)
 
 
 type alias Color =
@@ -18,3 +18,12 @@ gray =
 white : Color
 white =
     255
+
+
+toCss : Color -> String
+toCss c =
+    let
+        n =
+            clamp 0 255 c
+    in
+    "rgb(" ++ String.fromInt n ++ "," ++ String.fromInt n ++ "," ++ String.fromInt n ++ ")"

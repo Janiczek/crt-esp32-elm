@@ -1,4 +1,4 @@
-port module Main exposing (Flags, Model, Msg, main)
+port module Main exposing (Flags, Model(..), Msg, RootNode(..), init, main, update, view)
 
 {-| A web app to connect to and control an ESP32 over WiFi/WebSocket.
 
@@ -26,7 +26,6 @@ import Bitmap.Bd4_256_16_TestStrip
 import Bitmap.Bd4_64_64_Duke
 import Bitmap.Bd8_256_16_TestStrip
 import Bitmap.Bd8_64_64_Duke
-import Bitwise
 import Browser exposing (Document)
 import Browser.Events
 import Bytes exposing (Bytes)
@@ -36,6 +35,7 @@ import Color
 import Dirty
 import ESP32 exposing (ESP32, VideoConstants)
 import Font exposing (Font)
+import Font.Fallback
 import Html exposing (Html)
 import Html.Attributes
 import Html.Attributes.Extra
@@ -44,6 +44,7 @@ import Json.Decode as Decode
 import Json.Encode as Encode
 import List.Extra
 import Node exposing (Node, Type(..))
+import Path
 import Set
 import Svg exposing (Svg)
 import Svg.Attributes
@@ -56,6 +57,7 @@ type alias Flags =
 type Model
     = NotConnected ModelNotConnected
     | Connected ModelConnected
+    | LocalConnected ModelConnected
 
 
 type alias LoadingProgress =
@@ -139,13 +141,22 @@ type alias ModelConnected =
     , rootNode : RootNode
     , rootNodeJsonText : String
     , rootNodeJsonError : Maybe String
-    , selectedPath : List Int
+    , selectedPath : Maybe (List Int)
+    , previewMenu : Maybe PreviewMenu
     , previewZoom : Int
+    }
+
+
+type alias PreviewMenu =
+    { x : Int
+    , y : Int
+    , paths : List (List Int)
     }
 
 
 type Msg
     = ConnectRequested
+    | ConnectLocalRequested
     | InitialLoadStarted InitialLoadStart
     | InitialLoadChunkReceived Int
     | ConnectSuccessful ESP32
@@ -156,7 +167,9 @@ type Msg
 
 
 type MsgConnected
-    = SelectNode (List Int)
+    = SelectNode (Maybe (List Int))
+    | PreviewClicked Int Int
+    | PreviewContextMenuRequested Int Int
     | UpdateNodeAtPath (List Int) String Type
     | InsertChild (List Int) Int Type
     | RemoveNode (List Int)
@@ -194,103 +207,48 @@ port onRootNodeAck : (() -> msg) -> Sub msg
 port sendRootNode : Bytes -> Cmd msg
 
 
-insertAt : Int -> a -> List a -> List a
-insertAt i x list =
-    -- TODO use List.Extra instead
-    List.take i list ++ (x :: List.drop i list)
+addChildValidationError : ModelConnected -> List Int -> Type -> Maybe Node.LimitError
+addChildValidationError model parentPath type_ =
+    let
+        root =
+            desiredRoot model.rootNode
+
+        insertIndex =
+            Path.getNodeAtPath parentPath root
+                |> Maybe.andThen
+                    (\n ->
+                        case n.type_ of
+                            Node.Group { children } ->
+                                Just (List.length children)
+
+                            _ ->
+                                Nothing
+                    )
+                |> Maybe.withDefault 0
+
+        candidateRoot =
+            Path.insertChildAtPath
+                parentPath
+                insertIndex
+                (defaultNodeForType model.esp32.fonts model.videoConstants type_)
+                root
+    in
+    if candidateRoot.hash == root.hash then
+        Nothing
+
+    else
+        Node.limitErrors model.esp32 candidateRoot
+            |> List.head
 
 
-getNodeAtPath : List Int -> Node -> Maybe Node
-getNodeAtPath path root =
-    case path of
-        [] ->
-            Just root
+addChildLimitWarning : Node.LimitError -> String
+addChildLimitWarning err =
+    case err of
+        Node.MaxTotalNodesExceeded { maxTotalNodes } ->
+            "Add disabled: max total nodes reached (" ++ String.fromInt maxTotalNodes ++ ")."
 
-        i :: rest ->
-            case root.type_ of
-                Node.Group { children } ->
-                    List.Extra.getAt i children
-                        |> Maybe.andThen (getNodeAtPath rest)
-
-                _ ->
-                    Nothing
-
-
-setNodeAtPath : List Int -> Node -> Node -> Node
-setNodeAtPath path newNode root =
-    case path of
-        [] ->
-            newNode
-
-        i :: rest ->
-            case root.type_ of
-                Node.Group { children } ->
-                    case List.Extra.getAt i children of
-                        Just child ->
-                            let
-                                newChild =
-                                    setNodeAtPath rest newNode child
-                            in
-                            List.Extra.updateAt i (always newChild) children
-                                |> Node.group root.key
-
-                        Nothing ->
-                            root
-
-                _ ->
-                    root
-
-
-removeNodeAtPath : List Int -> Node -> Node
-removeNodeAtPath path root =
-    case path of
-        [] ->
-            root
-
-        [ i ] ->
-            case root.type_ of
-                Node.Group { children } ->
-                    Node.group root.key (List.Extra.removeAt i children)
-
-                _ ->
-                    root
-
-        i :: rest ->
-            case root.type_ of
-                Node.Group { children } ->
-                    case List.Extra.getAt i children of
-                        Just child ->
-                            let
-                                newChild =
-                                    removeNodeAtPath rest child
-                            in
-                            List.Extra.updateAt i (always newChild) children
-                                |> Node.group root.key
-
-                        Nothing ->
-                            root
-
-                _ ->
-                    root
-
-
-insertChildAtPath : List Int -> Int -> Node -> Node -> Node
-insertChildAtPath parentPath index newChild root =
-    case getNodeAtPath parentPath root of
-        Just parent ->
-            case parent.type_ of
-                Node.Group { children } ->
-                    let
-                        inserted =
-                            insertAt index newChild children
-                    in
-                    setNodeAtPath parentPath (Node.group parent.key inserted) root
-
-                _ ->
-                    root
-
-        Nothing ->
-            root
+        Node.NodeGroupMaxChildrenExceeded { maxChildren } ->
+            "Add disabled: group child limit reached (" ++ String.fromInt maxChildren ++ ")."
 
 
 type alias EmbeddedBitmap =
@@ -337,26 +295,6 @@ embeddedBitmapMatchIndex r =
                 e.w == r.w && e.h == r.h && e.bitDepth == r.bitDepth && e.data == r.data
             )
         |> Maybe.map Tuple.first
-
-
-{-| Top-left `(x, y)` so the bitmap is centered on the CRT usable rectangle, clamped so it stays in range.
--}
-centerBitmapPosition : VideoConstants -> { a | w : Int, h : Int } -> ( Int, Int )
-centerBitmapPosition vc r =
-    let
-        maxX =
-            vc.xMax - r.w + 1
-
-        maxY =
-            vc.yMax - r.h + 1
-
-        x =
-            clamp vc.xMin maxX (vc.xCenter - r.w // 2)
-
-        y =
-            clamp vc.yMin maxY (vc.yCenter - r.h // 2)
-    in
-    ( x, y )
 
 
 defaultBitmapConfig :
@@ -490,6 +428,15 @@ commitNewRootNode newRoot modelConnected =
     }
 
 
+commitNewRootNodeLocal : Node -> ModelConnected -> ModelConnected
+commitNewRootNodeLocal newRoot modelConnected =
+    { modelConnected
+        | rootNode = RootSynced { root = newRoot }
+        , rootNodeJsonText = encodeNodeJson newRoot
+        , rootNodeJsonError = Nothing
+    }
+
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
@@ -504,7 +451,62 @@ update msg model =
 
                 Connected _ ->
                     model
+
+                LocalConnected _ ->
+                    model
             , connect ()
+            )
+
+        ConnectLocalRequested ->
+            let
+                ( ( dukeW, dukeH ), dukeBitDepth, dukeData ) =
+                    Bitmap.Bd4_64_64_Duke.bd4_64_64_duke
+
+                localEsp32 : ESP32
+                localEsp32 =
+                    { videoWidth = 400
+                    , videoHeight = 240
+                    , crtPaddingLeft = 0
+                    , crtPaddingRight = 0
+                    , crtPaddingTop = 0
+                    , crtPaddingBottom = 0
+                    , maxTotalNodes = 1024
+                    , nodeGroupMaxChildren = 128
+                    , tileSize = 8
+                    , fonts = [ Font.Fallback.fallback ]
+                    }
+
+                root =
+                    Node.group "root"
+                        [ Node.rect "frame"
+                            { x = 12
+                            , y = 12
+                            , w = 120
+                            , h = 68
+                            , color = Color.white
+                            }
+                        , Node.bitmap "duke"
+                            { x = 24
+                            , y = 24
+                            , w = dukeW
+                            , h = dukeH
+                            , bitDepth = dukeBitDepth
+                            , data = dukeData
+                            }
+                        ]
+            in
+            ( LocalConnected
+                { esp32 = localEsp32
+                , videoConstants = ESP32.videoConstants localEsp32
+                , lastError = ""
+                , rootNode = RootSynced { root = root }
+                , rootNodeJsonText = encodeNodeJson root
+                , rootNodeJsonError = Nothing
+                , selectedPath = Nothing
+                , previewMenu = Nothing
+                , previewZoom = 3
+                }
+            , Cmd.none
             )
 
         InitialLoadStarted initialLoadStart ->
@@ -538,6 +540,9 @@ update msg model =
                 Connected _ ->
                     ( model, Cmd.none )
 
+                LocalConnected _ ->
+                    ( model, Cmd.none )
+
         InitialLoadChunkReceived chunkBytes ->
             case model of
                 NotConnected nc ->
@@ -565,6 +570,9 @@ update msg model =
                 Connected _ ->
                     ( model, Cmd.none )
 
+                LocalConnected _ ->
+                    ( model, Cmd.none )
+
         ConnectSuccessful esp32 ->
             let
                 videoConstants_ =
@@ -583,14 +591,25 @@ update msg model =
                 , rootNode = RootSynced { root = node }
                 , rootNodeJsonText = json
                 , rootNodeJsonError = Nothing
-                , selectedPath = []
+                , selectedPath = Nothing
+                , previewMenu = Nothing
                 , previewZoom = 3
                 }
             , Cmd.none
             )
 
         DisconnectRequested ->
-            ( model, disconnect () )
+            case model of
+                Connected _ ->
+                    ( model, disconnect () )
+
+                LocalConnected _ ->
+                    ( NotConnected emptyModelNotConnected
+                    , Cmd.none
+                    )
+
+                NotConnected _ ->
+                    ( model, Cmd.none )
 
         DisconnectSuccessful ->
             ( NotConnected emptyModelNotConnected
@@ -611,6 +630,9 @@ update msg model =
                 Connected c ->
                     ( Connected { c | lastError = error }, Cmd.none )
 
+                LocalConnected c ->
+                    ( LocalConnected { c | lastError = error }, Cmd.none )
+
         MsgConnected msgConnected ->
             case model of
                 NotConnected _ ->
@@ -625,19 +647,76 @@ update msg model =
                     , Cmd.map MsgConnected cmdMsgConnected
                     )
 
+                LocalConnected modelConnected ->
+                    let
+                        ( newModelConnected, cmdMsgConnected ) =
+                            updateConnectedLocal msgConnected modelConnected
+                    in
+                    ( LocalConnected newModelConnected
+                    , Cmd.map MsgConnected cmdMsgConnected
+                    )
+
 
 updateConnected : MsgConnected -> ModelConnected -> ( ModelConnected, Cmd MsgConnected )
 updateConnected msgConnected modelConnected =
     case msgConnected of
         SelectNode path ->
-            ( { modelConnected | selectedPath = path }
+            ( { modelConnected
+                | selectedPath = path
+                , previewMenu = Nothing
+              }
             , Cmd.none
             )
+
+        PreviewClicked x y ->
+            let
+                hits =
+                    Node.hitPathsAtPixel
+                        modelConnected.esp32.fonts
+                        x
+                        y
+                        (desiredRoot modelConnected.rootNode)
+            in
+            ( { modelConnected
+                | selectedPath = List.head hits
+                , previewMenu = Nothing
+              }
+            , Cmd.none
+            )
+
+        PreviewContextMenuRequested x y ->
+            let
+                hits =
+                    Node.hitPathsAtPixel
+                        modelConnected.esp32.fonts
+                        x
+                        y
+                        (desiredRoot modelConnected.rootNode)
+            in
+            if List.isEmpty hits then
+                ( { modelConnected
+                    | selectedPath = Nothing
+                    , previewMenu = Nothing
+                  }
+                , Cmd.none
+                )
+
+            else
+                ( { modelConnected
+                    | previewMenu =
+                        Just
+                            { x = x
+                            , y = y
+                            , paths = hits
+                            }
+                  }
+                , Cmd.none
+                )
 
         UpdateNodeAtPath path key type_ ->
             let
                 existing =
-                    getNodeAtPath path (desiredRoot modelConnected.rootNode)
+                    Path.getNodeAtPath path (desiredRoot modelConnected.rootNode)
 
                 newRoot =
                     case existing of
@@ -666,55 +745,71 @@ updateConnected msgConnected modelConnected =
                                                 Nothing ->
                                                     desiredRoot modelConnected.rootNode
                             in
-                            setNodeAtPath path newNode (desiredRoot modelConnected.rootNode)
+                            Path.setNodeAtPath path newNode (desiredRoot modelConnected.rootNode)
 
                         Nothing ->
                             desiredRoot modelConnected.rootNode
             in
-            ( modelConnected
+            ( { modelConnected | previewMenu = Nothing }
                 |> commitNewRootNode newRoot
             , Cmd.none
             )
 
         InsertChild parentPath index type_ ->
             let
+                root =
+                    desiredRoot modelConnected.rootNode
+
                 newChild =
                     defaultNodeForType modelConnected.esp32.fonts modelConnected.videoConstants type_
 
                 newRoot =
-                    insertChildAtPath parentPath index newChild (desiredRoot modelConnected.rootNode)
+                    Path.insertChildAtPath parentPath index newChild root
             in
-            ( modelConnected
-                |> commitNewRootNode newRoot
-            , Cmd.none
-            )
+            case List.head (Node.limitErrors modelConnected.esp32 newRoot) of
+                Just _ ->
+                    ( { modelConnected | previewMenu = Nothing }, Cmd.none )
+
+                Nothing ->
+                    ( { modelConnected | previewMenu = Nothing }
+                        |> commitNewRootNode newRoot
+                    , Cmd.none
+                    )
 
         RemoveNode path ->
             let
                 newRoot =
-                    removeNodeAtPath path (desiredRoot modelConnected.rootNode)
+                    Path.removeNodeAtPath path (desiredRoot modelConnected.rootNode)
             in
             ( { modelConnected
                 | selectedPath =
-                    if path == modelConnected.selectedPath then
-                        []
+                    modelConnected.selectedPath
+                        |> Maybe.andThen
+                            (\selectedPath ->
+                                if path |> List.Extra.isPrefixOf selectedPath then
+                                    Nothing
 
-                    else
-                        modelConnected.selectedPath
+                                else
+                                    Just selectedPath
+                            )
+                , previewMenu = Nothing
               }
                 |> commitNewRootNode newRoot
             , Cmd.none
             )
 
         SetPreviewZoom zoom ->
-            ( { modelConnected | previewZoom = zoom }
+            ( { modelConnected
+                | previewZoom = zoom
+                , previewMenu = Nothing
+              }
             , Cmd.none
             )
 
         SetRootNodeJsonText text ->
-            case Decode.decodeString (Node.jsonDecoder modelConnected.esp32.fonts) text of
+            case Decode.decodeString (Node.jsonDecoder modelConnected.esp32) text of
                 Ok parsed ->
-                    ( modelConnected
+                    ( { modelConnected | previewMenu = Nothing }
                         |> commitNewRootNode parsed
                     , Cmd.none
                     )
@@ -723,6 +818,7 @@ updateConnected msgConnected modelConnected =
                     ( { modelConnected
                         | rootNodeJsonText = text
                         , rootNodeJsonError = Just (Decode.errorToString err)
+                        , previewMenu = Nothing
                       }
                     , Cmd.none
                     )
@@ -731,6 +827,7 @@ updateConnected msgConnected modelConnected =
             ( { modelConnected
                 | rootNodeJsonText = encodeNodeJson (desiredRoot modelConnected.rootNode)
                 , rootNodeJsonError = Nothing
+                , previewMenu = Nothing
               }
             , Cmd.none
             )
@@ -796,6 +893,192 @@ updateConnected msgConnected modelConnected =
                     ( modelConnected, Cmd.none )
 
 
+updateConnectedLocal : MsgConnected -> ModelConnected -> ( ModelConnected, Cmd MsgConnected )
+updateConnectedLocal msgConnected modelConnected =
+    case msgConnected of
+        SelectNode path ->
+            ( { modelConnected
+                | selectedPath = path
+                , previewMenu = Nothing
+              }
+            , Cmd.none
+            )
+
+        PreviewClicked x y ->
+            let
+                hits =
+                    Node.hitPathsAtPixel
+                        modelConnected.esp32.fonts
+                        x
+                        y
+                        (desiredRoot modelConnected.rootNode)
+            in
+            ( { modelConnected
+                | selectedPath = List.head hits
+                , previewMenu = Nothing
+              }
+            , Cmd.none
+            )
+
+        PreviewContextMenuRequested x y ->
+            let
+                hits =
+                    Node.hitPathsAtPixel
+                        modelConnected.esp32.fonts
+                        x
+                        y
+                        (desiredRoot modelConnected.rootNode)
+            in
+            if List.isEmpty hits then
+                ( { modelConnected
+                    | selectedPath = Nothing
+                    , previewMenu = Nothing
+                  }
+                , Cmd.none
+                )
+
+            else
+                ( { modelConnected
+                    | previewMenu =
+                        Just
+                            { x = x
+                            , y = y
+                            , paths = hits
+                            }
+                  }
+                , Cmd.none
+                )
+
+        UpdateNodeAtPath path key type_ ->
+            let
+                existing =
+                    Path.getNodeAtPath path (desiredRoot modelConnected.rootNode)
+
+                newRoot =
+                    case existing of
+                        Just _ ->
+                            let
+                                newNode =
+                                    case type_ of
+                                        Group _ ->
+                                            case existing of
+                                                Just n ->
+                                                    case n.type_ of
+                                                        Node.Group { children } ->
+                                                            Node.group key children
+
+                                                        _ ->
+                                                            Node.group key []
+
+                                                Nothing ->
+                                                    Node.group key []
+
+                                        _ ->
+                                            case existing of
+                                                Just _ ->
+                                                    Node.fromKeyAndType modelConnected.esp32.fonts key type_
+
+                                                Nothing ->
+                                                    desiredRoot modelConnected.rootNode
+                            in
+                            Path.setNodeAtPath path newNode (desiredRoot modelConnected.rootNode)
+
+                        Nothing ->
+                            desiredRoot modelConnected.rootNode
+            in
+            ( { modelConnected | previewMenu = Nothing }
+                |> commitNewRootNodeLocal newRoot
+            , Cmd.none
+            )
+
+        InsertChild parentPath index type_ ->
+            let
+                newRoot =
+                    Path.insertChildAtPath
+                        parentPath
+                        index
+                        (defaultNodeForType modelConnected.esp32.fonts modelConnected.videoConstants type_)
+                        (desiredRoot modelConnected.rootNode)
+            in
+            case List.head (Node.limitErrors modelConnected.esp32 newRoot) of
+                Just _ ->
+                    ( { modelConnected | previewMenu = Nothing }, Cmd.none )
+
+                Nothing ->
+                    ( { modelConnected | previewMenu = Nothing }
+                        |> commitNewRootNodeLocal
+                            (Path.insertChildAtPath
+                                parentPath
+                                index
+                                (defaultNodeForType modelConnected.esp32.fonts modelConnected.videoConstants type_)
+                                (desiredRoot modelConnected.rootNode)
+                            )
+                    , Cmd.none
+                    )
+
+        RemoveNode path ->
+            let
+                newRoot =
+                    Path.removeNodeAtPath path (desiredRoot modelConnected.rootNode)
+            in
+            ( { modelConnected
+                | selectedPath =
+                    modelConnected.selectedPath
+                        |> Maybe.andThen
+                            (\selectedPath ->
+                                if path |> List.Extra.isPrefixOf selectedPath then
+                                    Nothing
+
+                                else
+                                    Just selectedPath
+                            )
+                , previewMenu = Nothing
+              }
+                |> commitNewRootNodeLocal newRoot
+            , Cmd.none
+            )
+
+        SetPreviewZoom zoom ->
+            ( { modelConnected
+                | previewZoom = zoom
+                , previewMenu = Nothing
+              }
+            , Cmd.none
+            )
+
+        SetRootNodeJsonText text ->
+            case Decode.decodeString (Node.jsonDecoder modelConnected.esp32) text of
+                Ok parsed ->
+                    ( { modelConnected | previewMenu = Nothing }
+                        |> commitNewRootNodeLocal parsed
+                    , Cmd.none
+                    )
+
+                Err err ->
+                    ( { modelConnected
+                        | rootNodeJsonText = text
+                        , rootNodeJsonError = Just (Decode.errorToString err)
+                        , previewMenu = Nothing
+                      }
+                    , Cmd.none
+                    )
+
+        RestoreRootNodeJson ->
+            ( { modelConnected
+                | rootNodeJsonText = encodeNodeJson (desiredRoot modelConnected.rootNode)
+                , rootNodeJsonError = Nothing
+                , previewMenu = Nothing
+              }
+            , Cmd.none
+            )
+
+        ThrottleFrame ->
+            ( modelConnected, Cmd.none )
+
+        RootNodeAcked ->
+            ( modelConnected, Cmd.none )
+
+
 setRootNode : ESP32 -> VideoConstants -> Node -> Node -> Cmd MsgConnected
 setRootNode esp32 videoConstants previousNode node =
     if node.hash == previousNode.hash then
@@ -840,7 +1123,10 @@ view_ model =
             viewNotConnected modelNotConnected
 
         Connected modelConnected ->
-            viewConnected modelConnected
+            viewConnected { isLocal = False } modelConnected
+
+        LocalConnected modelConnected ->
+            viewConnected { isLocal = True } modelConnected
 
 
 viewNotConnected : ModelNotConnected -> Html Msg
@@ -862,6 +1148,9 @@ viewNotConnected model =
                     , Html.button
                         [ Html.Events.onClick ConnectRequested ]
                         [ Html.text "Connect" ]
+                    , Html.button
+                        [ Html.Events.onClick ConnectLocalRequested ]
+                        [ Html.text "Local" ]
                     , viewLastError model.lastError
                     ]
               ]
@@ -940,14 +1229,167 @@ viewInitialLoadProgress progress =
         ]
 
 
-viewPreviewColumn : VideoConstants -> Int -> Node -> List Font -> Html Msg
-viewPreviewColumn vc zoom root fonts =
+previewPointDecoder : VideoConstants -> Int -> Decode.Decoder ( Int, Int )
+previewPointDecoder vc zoom =
     let
+        zoom_ =
+            max 1 zoom
+
+        coordinateDecoder field min_ max_ =
+            Decode.oneOf
+                [ Decode.field field Decode.float
+                , Decode.field field Decode.int |> Decode.map toFloat
+                ]
+                |> Decode.map
+                    (\offset ->
+                        clamp min_ max_ (min_ + (floor offset // zoom_))
+                    )
+    in
+    Decode.map2 Tuple.pair
+        (coordinateDecoder "offsetX" vc.xMin vc.xMax)
+        (coordinateDecoder "offsetY" vc.yMin vc.yMax)
+
+
+selectionBorderView : VideoConstants -> Int -> Maybe Node -> Html msg
+selectionBorderView vc zoom maybeNode =
+    case maybeNode of
+        Nothing ->
+            Html.text ""
+
+        Just node ->
+            let
+                bbox =
+                    node.bbox
+
+                leftPx =
+                    (bbox.x - vc.xMin) * zoom
+
+                topPx =
+                    (bbox.y - vc.yMin) * zoom
+
+                widthPx =
+                    max 1 (bbox.w * zoom)
+
+                heightPx =
+                    max 1 (bbox.h * zoom)
+
+                borderStyle =
+                    case node.type_ of
+                        Group _ ->
+                            "dashed"
+
+                        Rect _ ->
+                            "solid"
+
+                        RectFill _ ->
+                            "solid"
+
+                        XLine _ ->
+                            "solid"
+
+                        YLine _ ->
+                            "solid"
+
+                        Text _ ->
+                            "solid"
+
+                        Bitmap _ ->
+                            "solid"
+            in
+            if bbox.w <= 0 || bbox.h <= 0 then
+                Html.text ""
+
+            else
+                Html.div
+                    [ Html.Attributes.id "preview-selection-border"
+                    , Html.Attributes.style "position" "absolute"
+                    , Html.Attributes.style "left" (String.fromInt leftPx ++ "px")
+                    , Html.Attributes.style "top" (String.fromInt topPx ++ "px")
+                    , Html.Attributes.style "width" (String.fromInt widthPx ++ "px")
+                    , Html.Attributes.style "height" (String.fromInt heightPx ++ "px")
+                    , Html.Attributes.style "border" "1px solid #ffd60a"
+                    , Html.Attributes.style "border-style" borderStyle
+                    , Html.Attributes.style "box-sizing" "border-box"
+                    , Html.Attributes.style "pointer-events" "none"
+                    , Html.Attributes.style "z-index" "1"
+                    ]
+                    []
+
+
+previewMenuView : VideoConstants -> Int -> Node -> PreviewMenu -> Html Msg
+previewMenuView vc zoom root previewMenu =
+    let
+        menuButton path node =
+            Html.button
+                [ Html.Events.onClick (MsgConnected (SelectNode (Just path)))
+                , Html.Attributes.style "display" "block"
+                , Html.Attributes.style "width" "100%"
+                , Html.Attributes.style "text-align" "left"
+                , Html.Attributes.style "border-radius" "6px"
+                ]
+                [ Html.text (Node.displayLabel node) ]
+
+        items =
+            previewMenu.paths
+                |> List.filterMap
+                    (\path ->
+                        Path.getNodeAtPath path root
+                            |> Maybe.map (\node -> menuButton path node)
+                    )
+    in
+    Html.div
+        [ Html.Attributes.id "preview-layer-menu"
+        , Html.Attributes.style "position" "absolute"
+        , Html.Attributes.style "left" (String.fromInt ((previewMenu.x - vc.xMin) * zoom) ++ "px")
+        , Html.Attributes.style "top" (String.fromInt ((previewMenu.y - vc.yMin) * zoom) ++ "px")
+        , Html.Attributes.style "z-index" "2"
+        , Html.Attributes.style "display" "flex"
+        , Html.Attributes.style "flex-direction" "column"
+        , Html.Attributes.style "gap" "0.25rem"
+        , Html.Attributes.style "min-width" "12rem"
+        , Html.Attributes.style "padding" "0.35rem"
+        , Html.Attributes.style "background" "var(--surface-2)"
+        , Html.Attributes.style "border" "1px solid var(--border)"
+        , Html.Attributes.style "border-radius" "8px"
+        , Html.Attributes.style "box-shadow" "var(--shadow)"
+        ]
+        items
+
+
+viewPreviewColumn : ModelConnected -> Html Msg
+viewPreviewColumn model =
+    let
+        vc =
+            model.videoConstants
+
+        zoom =
+            model.previewZoom
+
+        root =
+            desiredRoot model.rootNode
+
+        selectedNode =
+            model.selectedPath
+                |> Maybe.andThen (\path -> Path.getNodeAtPath path root)
+
         zoomedW =
             vc.usableWidth * zoom
 
         zoomedH =
             vc.usableHeight * zoom
+
+        clickDecoder =
+            previewPointDecoder vc zoom
+                |> Decode.map (\( x, y ) -> MsgConnected (PreviewClicked x y))
+
+        contextMenuDecoder =
+            previewPointDecoder vc zoom
+                |> Decode.map
+                    (\( x, y ) ->
+                        ( MsgConnected (PreviewContextMenuRequested x y)
+                        , True
+                        )
+                    )
 
         zoomButton z =
             Html.button
@@ -985,80 +1427,47 @@ viewPreviewColumn vc zoom root fonts =
             , Html.Attributes.style "overflow" "visible"
             ]
             [ Html.div
-                [ Html.Attributes.style "width" (String.fromInt vc.usableWidth ++ "px")
-                , Html.Attributes.style "height" (String.fromInt vc.usableHeight ++ "px")
-                , Html.Attributes.style "transform" ("scale(" ++ String.fromInt zoom ++ ")")
-                , Html.Attributes.style "transform-origin" "top left"
-                , Html.Attributes.style "background" "black"
-                , Html.Attributes.style "anchor-name" "--screen"
-                , Html.Attributes.style "overflow" "hidden"
-                , Html.Attributes.style "image-rendering" "pixelated"
-                , Html.Attributes.style "image-rendering" "crisp-edges"
+                [ Html.Attributes.id "preview-surface"
+                , Html.Attributes.style "width" (String.fromInt zoomedW ++ "px")
+                , Html.Attributes.style "height" (String.fromInt zoomedH ++ "px")
+                , Html.Events.on "click" clickDecoder
+                , Html.Events.preventDefaultOn "contextmenu" contextMenuDecoder
                 ]
-                [ Svg.svg
-                    [ Svg.Attributes.width (String.fromInt vc.usableWidth)
-                    , Svg.Attributes.height (String.fromInt vc.usableHeight)
-                    , Svg.Attributes.viewBox
-                        (String.fromInt vc.xMin
-                            ++ " "
-                            ++ String.fromInt vc.yMin
-                            ++ " "
-                            ++ String.fromInt vc.usableWidth
-                            ++ " "
-                            ++ String.fromInt vc.usableHeight
-                        )
-                    , Svg.Attributes.style "display:block"
+                [ Html.div
+                    [ Html.Attributes.style "width" (String.fromInt vc.usableWidth ++ "px")
+                    , Html.Attributes.style "height" (String.fromInt vc.usableHeight ++ "px")
+                    , Html.Attributes.style "transform" ("scale(" ++ String.fromInt zoom ++ ")")
+                    , Html.Attributes.style "transform-origin" "top left"
+                    , Html.Attributes.style "background" "black"
+                    , Html.Attributes.style "overflow" "hidden"
+                    , Html.Attributes.style "image-rendering" "pixelated"
+                    , Html.Attributes.style "image-rendering" "crisp-edges"
+                    , Html.Attributes.style "pointer-events" "none"
                     ]
-                    (renderNodeToSvg fonts root)
+                    [ Svg.svg
+                        [ Svg.Attributes.width (String.fromInt vc.usableWidth)
+                        , Svg.Attributes.height (String.fromInt vc.usableHeight)
+                        , Svg.Attributes.viewBox
+                            (String.fromInt vc.xMin
+                                ++ " "
+                                ++ String.fromInt vc.yMin
+                                ++ " "
+                                ++ String.fromInt vc.usableWidth
+                                ++ " "
+                                ++ String.fromInt vc.usableHeight
+                            )
+                        , Svg.Attributes.style "display:block;pointer-events:none"
+                        ]
+                        (renderNodeToSvg model.esp32.fonts model.selectedPath [] root)
+                    ]
                 ]
-            , Html.div
-                [ Html.Attributes.style "position" "absolute"
-                , Html.Attributes.style "position-anchor" "--screen"
-                , Html.Attributes.style "right" "anchor(--screen left)"
-                , Html.Attributes.style "bottom" "anchor(--screen top)"
-                , Html.Attributes.style "width" "8px"
-                , Html.Attributes.style "height" "8px"
-                , Html.Attributes.style "border-bottom" "1px solid var(--muted)"
-                , Html.Attributes.style "border-right" "1px solid var(--muted)"
-                , Html.Attributes.style "pointer-events" "none"
-                ]
-                []
-            , Html.div
-                [ Html.Attributes.style "position" "absolute"
-                , Html.Attributes.style "position-anchor" "--screen"
-                , Html.Attributes.style "left" "anchor(--screen right)"
-                , Html.Attributes.style "bottom" "anchor(--screen top)"
-                , Html.Attributes.style "width" "8px"
-                , Html.Attributes.style "height" "8px"
-                , Html.Attributes.style "border-bottom" "1px solid var(--muted)"
-                , Html.Attributes.style "border-left" "1px solid var(--muted)"
-                , Html.Attributes.style "pointer-events" "none"
-                ]
-                []
-            , Html.div
-                [ Html.Attributes.style "position" "absolute"
-                , Html.Attributes.style "position-anchor" "--screen"
-                , Html.Attributes.style "right" "anchor(--screen left)"
-                , Html.Attributes.style "top" "anchor(--screen bottom)"
-                , Html.Attributes.style "width" "8px"
-                , Html.Attributes.style "height" "8px"
-                , Html.Attributes.style "border-top" "1px solid var(--muted)"
-                , Html.Attributes.style "border-right" "1px solid var(--muted)"
-                , Html.Attributes.style "pointer-events" "none"
-                ]
-                []
-            , Html.div
-                [ Html.Attributes.style "position" "absolute"
-                , Html.Attributes.style "position-anchor" "--screen"
-                , Html.Attributes.style "left" "anchor(--screen right)"
-                , Html.Attributes.style "top" "anchor(--screen bottom)"
-                , Html.Attributes.style "width" "8px"
-                , Html.Attributes.style "height" "8px"
-                , Html.Attributes.style "border-top" "1px solid var(--muted)"
-                , Html.Attributes.style "border-left" "1px solid var(--muted)"
-                , Html.Attributes.style "pointer-events" "none"
-                ]
-                []
+            , selectionBorderView vc zoom selectedNode
+            , case model.previewMenu of
+                Just previewMenu ->
+                    previewMenuView vc zoom root previewMenu
+
+                Nothing ->
+                    Html.text ""
             ]
         ]
 
@@ -1200,37 +1609,14 @@ viewTreeNode : ModelConnected -> List Int -> Node -> Html Msg
 viewTreeNode model path node =
     let
         isSelected =
-            model.selectedPath == path
-
-        nodeLabel =
-            case node.type_ of
-                Rect _ ->
-                    "Rect"
-
-                RectFill _ ->
-                    "RectFill"
-
-                XLine _ ->
-                    "XLine"
-
-                YLine _ ->
-                    "YLine"
-
-                Text _ ->
-                    "Text"
-
-                Bitmap _ ->
-                    "Bitmap"
-
-                Node.Group _ ->
-                    "Group"
+            model.selectedPath == Just path
 
         rowAttrs =
             [ Html.Attributes.style "padding" "0.2rem 0.4rem"
             , Html.Attributes.style "cursor" "pointer"
             , Html.Attributes.style "border-radius" "2px"
             , Html.Attributes.style "margin-bottom" "1px"
-            , Html.Events.onClick (MsgConnected (SelectNode path))
+            , Html.Events.onClick (MsgConnected (SelectNode (Just path)))
             ]
                 ++ (if isSelected then
                         [ Html.Attributes.style "background" "var(--selection)" ]
@@ -1275,7 +1661,7 @@ viewTreeNode model path node =
     in
     Html.div []
         [ Html.div rowAttrs
-            [ Html.text (nodeLabel ++ " \"" ++ node.key ++ "\"")
+            [ Html.text (Node.displayLabel node)
             , addRemove
             ]
         , childrenView
@@ -1286,7 +1672,7 @@ viewAddChildButton : ModelConnected -> List Int -> Html Msg
 viewAddChildButton model path =
     let
         canAdd =
-            case getNodeAtPath path (desiredRoot model.rootNode) of
+            case Path.getNodeAtPath path (desiredRoot model.rootNode) of
                 Just n ->
                     case n.type_ of
                         Node.Group _ ->
@@ -1301,7 +1687,7 @@ viewAddChildButton model path =
     if canAdd then
         let
             insertIndex =
-                getNodeAtPath path (desiredRoot model.rootNode)
+                Path.getNodeAtPath path (desiredRoot model.rootNode)
                     |> Maybe.andThen
                         (\n ->
                             case n.type_ of
@@ -1316,54 +1702,72 @@ viewAddChildButton model path =
             vc =
                 model.videoConstants
 
+            limitWarning =
+                addChildValidationError model path (Group { children = [] })
+                    |> Maybe.map addChildLimitWarning
+
             addOption val label =
                 Html.option [ Html.Attributes.value val ] [ Html.text label ]
         in
-        Html.select
-            [ Html.Events.on "change"
-                (Decode.at [ "target", "value" ] Decode.string
-                    |> Decode.map
-                        (\v ->
-                            case v of
-                                "rect" ->
-                                    MsgConnected (InsertChild path insertIndex (Rect { x = vc.xMin, y = vc.yMin, w = 10, h = 10, color = Color.white }))
+        Html.span []
+            [ Html.select
+                [ Html.Events.on "change"
+                    (Decode.at [ "target", "value" ] Decode.string
+                        |> Decode.map
+                            (\v ->
+                                case v of
+                                    "rect" ->
+                                        MsgConnected (InsertChild path insertIndex (Rect { x = vc.xMin, y = vc.yMin, w = 10, h = 10, color = Color.white }))
 
-                                "rectFill" ->
-                                    MsgConnected (InsertChild path insertIndex (RectFill { x = vc.xMin, y = vc.yMin, w = 10, h = 10, color = Color.white }))
+                                    "rectFill" ->
+                                        MsgConnected (InsertChild path insertIndex (RectFill { x = vc.xMin, y = vc.yMin, w = 10, h = 10, color = Color.white }))
 
-                                "xLine" ->
-                                    MsgConnected (InsertChild path insertIndex (XLine { x = vc.xMin, y = vc.yMin, len = 20, color = Color.white }))
+                                    "xLine" ->
+                                        MsgConnected (InsertChild path insertIndex (XLine { x = vc.xMin, y = vc.yMin, len = 20, color = Color.white }))
 
-                                "yLine" ->
-                                    MsgConnected (InsertChild path insertIndex (YLine { x = vc.xMin, y = vc.yMin, len = 20, color = Color.white }))
+                                    "yLine" ->
+                                        MsgConnected (InsertChild path insertIndex (YLine { x = vc.xMin, y = vc.yMin, len = 20, color = Color.white }))
 
-                                "text" ->
-                                    MsgConnected (InsertChild path insertIndex (Text { x = vc.xMin, y = vc.yMin, text = "Text", fontIndex = 0, color = Color.white }))
+                                    "text" ->
+                                        MsgConnected (InsertChild path insertIndex (Text { x = vc.xMin, y = vc.yMin, text = "Text", fontIndex = 0, color = Color.white }))
 
-                                "bitmap" ->
-                                    MsgConnected
-                                        (InsertChild path
-                                            insertIndex
-                                            (Bitmap { defaultBitmapConfig | x = vc.xMin, y = vc.yMin })
-                                        )
+                                    "bitmap" ->
+                                        MsgConnected
+                                            (InsertChild path
+                                                insertIndex
+                                                (Bitmap { defaultBitmapConfig | x = vc.xMin, y = vc.yMin })
+                                            )
 
-                                "group" ->
-                                    MsgConnected (InsertChild path insertIndex (Group { children = [] }))
+                                    "group" ->
+                                        MsgConnected (InsertChild path insertIndex (Group { children = [] }))
 
-                                _ ->
-                                    MsgConnected (SelectNode path)
-                        )
-                )
-            , Html.Attributes.style "padding" "0 0.25rem"
-            ]
-            [ Html.option [ Html.Attributes.value "" ] [ Html.text "Add…" ]
-            , addOption "rect" "Rect"
-            , addOption "rectFill" "RectFill"
-            , addOption "xLine" "XLine"
-            , addOption "yLine" "YLine"
-            , addOption "text" "Text"
-            , addOption "bitmap" "Bitmap"
-            , addOption "group" "Group"
+                                    _ ->
+                                        MsgConnected (SelectNode (Just path))
+                            )
+                    )
+                , Html.Attributes.style "padding" "0 0.25rem"
+                , Html.Attributes.id ("add-child-select-" ++ String.join "-" (List.map String.fromInt path))
+                , Html.Attributes.disabled (limitWarning /= Nothing)
+                ]
+                [ Html.option [ Html.Attributes.value "" ] [ Html.text "Add…" ]
+                , addOption "rect" "Rect"
+                , addOption "rectFill" "RectFill"
+                , addOption "xLine" "XLine"
+                , addOption "yLine" "YLine"
+                , addOption "text" "Text"
+                , addOption "bitmap" "Bitmap"
+                , addOption "group" "Group"
+                ]
+            , case limitWarning of
+                Just warning ->
+                    Html.span
+                        [ Html.Attributes.style "margin-left" "0.35rem"
+                        , Html.Attributes.style "color" "var(--muted)"
+                        ]
+                        [ Html.text warning ]
+
+                Nothing ->
+                    Html.text ""
             ]
 
     else
@@ -1395,9 +1799,14 @@ viewDetailsColumn model =
             , Html.Attributes.style "overflow" "auto"
             , Html.Attributes.style "padding" "0.5rem"
             ]
-            (case getNodeAtPath model.selectedPath (desiredRoot model.rootNode) of
-                Just node ->
-                    viewNodeDetails model node model.selectedPath
+            (case model.selectedPath of
+                Just path ->
+                    case Path.getNodeAtPath path (desiredRoot model.rootNode) of
+                        Just node ->
+                            viewNodeDetails model node path
+
+                        Nothing ->
+                            [ Html.div [ Html.Attributes.style "color" "var(--muted)" ] [ Html.text "Select a node." ] ]
 
                 Nothing ->
                     [ Html.div [ Html.Attributes.style "color" "var(--muted)" ] [ Html.text "Select a node." ] ]
@@ -1430,6 +1839,30 @@ viewNodeDetails model node path =
                 []
             ]
 
+        centerInUsableAreaButton : Int -> Int -> (Int -> Int -> Type) -> Html Msg
+        centerInUsableAreaButton wantedX wantedY toType =
+            Html.button
+                [ Html.Events.onClick
+                    (MsgConnected
+                        (UpdateNodeAtPath path
+                            node.key
+                            (toType
+                                (max model.videoConstants.xMin wantedX)
+                                (max model.videoConstants.yMin wantedY)
+                            )
+                        )
+                    )
+                ]
+                [ Html.text "Center in usable area" ]
+
+        centerInUsableAreaButtonForNode : (Int -> Int -> Type) -> Html Msg
+        centerInUsableAreaButtonForNode toType =
+            let
+                ( x, y ) =
+                    Node.centerPosition model.videoConstants node
+            in
+            centerInUsableAreaButton x y toType
+
         typeFields =
             case node.type_ of
                 Rect r ->
@@ -1437,6 +1870,8 @@ viewNodeDetails model node path =
                     , intSliderInput model.videoConstants.xMin model.videoConstants.xMax path node.key (\x -> Rect { r | x = x }) r.x
                     , fieldLabel "y"
                     , intSliderInput model.videoConstants.yMin model.videoConstants.yMax path node.key (\y -> Rect { r | y = y }) r.y
+                    , fieldLabel "center"
+                    , centerInUsableAreaButtonForNode (\x y -> Rect { r | x = x, y = y })
                     , fieldLabel "w"
                     , intSliderInput 0 model.videoConstants.usableWidth path node.key (\w -> Rect { r | w = w }) r.w
                     , fieldLabel "h"
@@ -1450,6 +1885,8 @@ viewNodeDetails model node path =
                     , intSliderInput model.videoConstants.xMin model.videoConstants.xMax path node.key (\x -> RectFill { r | x = x }) r.x
                     , fieldLabel "y"
                     , intSliderInput model.videoConstants.yMin model.videoConstants.yMax path node.key (\y -> RectFill { r | y = y }) r.y
+                    , fieldLabel "center"
+                    , centerInUsableAreaButtonForNode (\x y -> RectFill { r | x = x, y = y })
                     , fieldLabel "w"
                     , intSliderInput 0 model.videoConstants.usableWidth path node.key (\w -> RectFill { r | w = w }) r.w
                     , fieldLabel "h"
@@ -1463,6 +1900,8 @@ viewNodeDetails model node path =
                     , intSliderInput model.videoConstants.xMin model.videoConstants.xMax path node.key (\x -> XLine { r | x = x }) r.x
                     , fieldLabel "y"
                     , intSliderInput model.videoConstants.yMin model.videoConstants.yMax path node.key (\y -> XLine { r | y = y }) r.y
+                    , fieldLabel "center"
+                    , centerInUsableAreaButtonForNode (\x y -> XLine { r | x = x, y = y })
                     , fieldLabel "len"
                     , intSliderInput 0 model.videoConstants.usableWidth path node.key (\len -> XLine { r | len = len }) r.len
                     , fieldLabel "color"
@@ -1474,6 +1913,8 @@ viewNodeDetails model node path =
                     , intSliderInput model.videoConstants.xMin model.videoConstants.xMax path node.key (\x -> YLine { r | x = x }) r.x
                     , fieldLabel "y"
                     , intSliderInput model.videoConstants.yMin model.videoConstants.yMax path node.key (\y -> YLine { r | y = y }) r.y
+                    , fieldLabel "center"
+                    , centerInUsableAreaButtonForNode (\x y -> YLine { r | x = x, y = y })
                     , fieldLabel "len"
                     , intSliderInput 0 model.videoConstants.usableHeight path node.key (\len -> YLine { r | len = len }) r.len
                     , fieldLabel "color"
@@ -1485,6 +1926,8 @@ viewNodeDetails model node path =
                     , intSliderInput model.videoConstants.xMin model.videoConstants.xMax path node.key (\x -> Text { r | x = x }) r.x
                     , fieldLabel "y"
                     , intSliderInput model.videoConstants.yMin model.videoConstants.yMax path node.key (\y -> Text { r | y = y }) r.y
+                    , fieldLabel "center"
+                    , centerInUsableAreaButtonForNode (\x y -> Text { r | x = x, y = y })
                     , fieldLabel "text"
                     , Html.textarea
                         [ Html.Attributes.value r.text
@@ -1500,7 +1943,7 @@ viewNodeDetails model node path =
                             (\s ->
                                 String.toInt s
                                     |> Maybe.map (\fontIndex -> MsgConnected (UpdateNodeAtPath path node.key (Text { r | fontIndex = fontIndex })))
-                                    |> Maybe.withDefault (MsgConnected (SelectNode path))
+                                    |> Maybe.withDefault (MsgConnected (SelectNode (Just path)))
                             )
                         , Html.Attributes.style "width" "100%"
                         , Html.Attributes.style "box-sizing" "border-box"
@@ -1525,18 +1968,7 @@ viewNodeDetails model node path =
                     , fieldLabel "y"
                     , intSliderInput model.videoConstants.yMin model.videoConstants.yMax path node.key (\y -> Bitmap { r | y = y }) r.y
                     , fieldLabel "center"
-                    , Html.button
-                        [ Html.Events.onClick
-                            (MsgConnected
-                                (let
-                                    ( cx, cy ) =
-                                        centerBitmapPosition model.videoConstants r
-                                 in
-                                 UpdateNodeAtPath path node.key (Bitmap { r | x = cx, y = cy })
-                                )
-                            )
-                        ]
-                        [ Html.text "Center in usable area" ]
+                    , centerInUsableAreaButtonForNode (\x y -> Bitmap { r | x = x, y = y })
                     , fieldLabel "preset"
                     , Html.select
                         [ Html.Events.onInput
@@ -1558,7 +1990,7 @@ viewNodeDetails model node path =
                                                     )
                                                 )
                                         )
-                                    |> Maybe.withDefault (MsgConnected (SelectNode path))
+                                    |> Maybe.withDefault (MsgConnected (SelectNode (Just path)))
                             )
                         , Html.Attributes.style "width" "100%"
                         , Html.Attributes.style "box-sizing" "border-box"
@@ -1622,7 +2054,7 @@ intSliderInput min_ max_ path key toType current =
                     String.toInt s
                         |> Maybe.map (clamp min_ max_)
                         |> Maybe.map (\v -> MsgConnected (UpdateNodeAtPath path key (toType v)))
-                        |> Maybe.withDefault (MsgConnected (SelectNode path))
+                        |> Maybe.withDefault (MsgConnected (SelectNode (Just path)))
                 )
             , Html.Attributes.style "flex" "1"
             ]
@@ -1670,7 +2102,7 @@ colorInput path key toType current =
                     String.toInt s
                         |> Maybe.map (clamp 0 255)
                         |> Maybe.map (\v -> MsgConnected (UpdateNodeAtPath path key (toType v)))
-                        |> Maybe.withDefault (MsgConnected (SelectNode path))
+                        |> Maybe.withDefault (MsgConnected (SelectNode (Just path)))
                 )
             , Html.Attributes.style "flex" "1"
             ]
@@ -1685,12 +2117,8 @@ colorInput path key toType current =
         ]
 
 
-viewConnected : ModelConnected -> Html Msg
-viewConnected model =
-    let
-        vc =
-            model.videoConstants
-    in
+viewConnected : { isLocal : Bool } -> ModelConnected -> Html Msg
+viewConnected { isLocal } model =
     Html.div
         [ Html.Attributes.style "display" "flex"
         , Html.Attributes.style "height" "100vh"
@@ -1714,6 +2142,11 @@ viewConnected model =
                 , Html.button
                     [ Html.Events.onClick DisconnectRequested ]
                     [ Html.text "Disconnect" ]
+                , if isLocal then
+                    Html.text "Local-only (not connected to an ESP32)."
+
+                  else
+                    Html.text ""
                 , viewLastError model.lastError
                 ]
             , Html.div
@@ -1721,7 +2154,7 @@ viewConnected model =
                 , Html.Attributes.style "min-height" "0"
                 , Html.Attributes.style "overflow" "auto"
                 ]
-                [ viewPreviewColumn vc model.previewZoom (desiredRoot model.rootNode) model.esp32.fonts ]
+                [ viewPreviewColumn model ]
             ]
         , viewSidebarColumn model
         ]
@@ -1738,35 +2171,39 @@ viewLastError lastError =
         Html.text ""
 
 
-colorToCss : Int -> String
-colorToCss c =
+renderNodeToSvg : List Font -> Maybe (List Int) -> List Int -> Node -> List (Svg msg)
+renderNodeToSvg fonts selectedPath path node_ =
     let
-        n =
-            clamp 0 255 c
+        inner =
+            case node_.type_ of
+                Node.Group { children } ->
+                    children
+                        |> List.indexedMap
+                            (\i child ->
+                                renderNodeToSvg fonts selectedPath (path ++ [ i ]) child
+                            )
+                        |> List.concat
+
+                _ ->
+                    renderNodeToSvgLeaf fonts node_
     in
-    "rgb(" ++ String.fromInt n ++ "," ++ String.fromInt n ++ "," ++ String.fromInt n ++ ")"
+    [ Svg.g
+        [ Html.Attributes.attribute "data-hash" (String.fromInt node_.hash)
+        , Html.Attributes.attribute "data-index-path" (Path.toString path)
+        , Html.Attributes.attribute "data-selected"
+            (if selectedPath == Just path then
+                "true"
+
+             else
+                "false"
+            )
+        ]
+        inner
+    ]
 
 
-renderGlyphPixel : Font -> Int -> Int -> Int -> Bool
-renderGlyphPixel font g row col =
-    let
-        byteIdx =
-            g * font.glyphHeight + row
-
-        byte =
-            font.bits
-                |> List.drop byteIdx
-                |> List.head
-                |> Maybe.withDefault 0
-
-        bit =
-            Bitwise.and (Bitwise.shiftRightBy (7 - col) byte) 1
-    in
-    bit == 1
-
-
-renderNodeToSvg : List Font -> Node -> List (Svg msg)
-renderNodeToSvg fonts node_ =
+renderNodeToSvgLeaf : List Font -> Node -> List (Svg msg)
+renderNodeToSvgLeaf fonts node_ =
     case node_.type_ of
         Rect { x, y, w, h, color } ->
             if w <= 0 || h <= 0 then
@@ -1775,7 +2212,7 @@ renderNodeToSvg fonts node_ =
             else
                 let
                     css =
-                        colorToCss color
+                        Color.toCss color
 
                     x2 =
                         x + w - 1
@@ -1824,7 +2261,7 @@ renderNodeToSvg fonts node_ =
                 , Svg.Attributes.y (String.fromInt y)
                 , Svg.Attributes.width (String.fromInt w)
                 , Svg.Attributes.height (String.fromInt h)
-                , Svg.Attributes.fill (colorToCss color)
+                , Svg.Attributes.fill (Color.toCss color)
                 ]
                 []
             ]
@@ -1835,7 +2272,7 @@ renderNodeToSvg fonts node_ =
                 , Svg.Attributes.y (String.fromInt y)
                 , Svg.Attributes.width (String.fromInt len)
                 , Svg.Attributes.height "1"
-                , Svg.Attributes.fill (colorToCss color)
+                , Svg.Attributes.fill (Color.toCss color)
                 ]
                 []
             ]
@@ -1846,7 +2283,7 @@ renderNodeToSvg fonts node_ =
                 , Svg.Attributes.y (String.fromInt y)
                 , Svg.Attributes.width "1"
                 , Svg.Attributes.height (String.fromInt len)
-                , Svg.Attributes.fill (colorToCss color)
+                , Svg.Attributes.fill (Color.toCss color)
                 ]
                 []
             ]
@@ -1883,14 +2320,14 @@ renderNodeToSvg fonts node_ =
                                             List.range 0 (font.glyphWidth - 1)
                                                 |> List.filterMap
                                                     (\c ->
-                                                        if renderGlyphPixel font glyphIdx r c then
+                                                        if Font.renderGlyphPixel font glyphIdx r c then
                                                             Just
                                                                 (Svg.rect
                                                                     [ Svg.Attributes.x (String.fromInt (gx + c))
                                                                     , Svg.Attributes.y (String.fromInt (gy + r))
                                                                     , Svg.Attributes.width "1"
                                                                     , Svg.Attributes.height "1"
-                                                                    , Svg.Attributes.fill (colorToCss color)
+                                                                    , Svg.Attributes.fill (Color.toCss color)
                                                                     ]
                                                                     []
                                                                 )
@@ -1944,14 +2381,14 @@ renderNodeToSvg fonts node_ =
                                         , Svg.Attributes.y (String.fromInt (y + row))
                                         , Svg.Attributes.width "1"
                                         , Svg.Attributes.height "1"
-                                        , Svg.Attributes.fill (colorToCss gray)
+                                        , Svg.Attributes.fill (Color.toCss gray)
                                         ]
                                         []
                                 )
                     )
 
-        Group { children } ->
-            List.concatMap (renderNodeToSvg fonts) children
+        Node.Group _ ->
+            []
 
 
 subscriptions : Model -> Sub Msg
@@ -1985,6 +2422,9 @@ subscriptions model =
                             Browser.Events.onAnimationFrame
                                 (\_ -> MsgConnected ThrottleFrame)
                     ]
+
+            LocalConnected _ ->
+                Sub.none
         ]
 
 

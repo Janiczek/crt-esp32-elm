@@ -1,27 +1,41 @@
 module Node exposing
-    ( Node
+    ( LimitError(..)
+    , Node
     , Type(..)
     , bitmap
     , bytesEncoder
+    , centerPosition
+    , collectHitPaths
+    , displayLabel
     , empty
     , fromKeyAndType
     , group
+    , hitPathsAtPixel
     , jsonDecoder
     , jsonEncoder
+    , label
+    , limitErrors
+    , maxFontIndex
+    , maxGroupChildren
+    , nodeDrawsPixel
+    , pointInBounds
     , rect
     , rectFill
+    , size
     , text
+    , textDrawsPixel
     , xLine
     , yLine
     )
 
+import Bitmap exposing (BitDepth)
 import Bitwise
 import BoundingBox exposing (BoundingBox)
-import Bitmap exposing (BitDepth)
 import Bytes exposing (Endianness(..))
 import Bytes.Encode
 import BytesExtraExtra
 import Color exposing (Color)
+import ESP32 exposing (ESP32, VideoConstants)
 import FNV1a
 import Flate
 import Font exposing (Font)
@@ -39,7 +53,6 @@ type alias Node =
     }
 
 
-
 type Type
     = Rect { x : Int, y : Int, w : Int, h : Int, color : Color }
     | RectFill { x : Int, y : Int, w : Int, h : Int, color : Color }
@@ -48,6 +61,31 @@ type Type
     | Text { x : Int, y : Int, text : String, fontIndex : Int, color : Color }
     | Bitmap { x : Int, y : Int, w : Int, h : Int, bitDepth : BitDepth, data : List Int }
     | Group { children : List Node }
+
+
+type LimitError
+    = MaxTotalNodesExceeded
+        { maxTotalNodes : Int
+        , actualTotalNodes : Int
+        }
+    | NodeGroupMaxChildrenExceeded
+        { groupKey : String
+        , maxChildren : Int
+        , actualChildren : Int
+        }
+
+
+centerPosition : VideoConstants -> Node -> ( Int, Int )
+centerPosition vc node_ =
+    let
+        centerBySize w h =
+            ( vc.xCenter - (w // 2) |> max vc.xMin
+            , vc.yCenter - (h // 2) |> max vc.yMin
+            )
+    in
+    centerBySize
+        (max 0 node_.bbox.w)
+        (max 0 node_.bbox.h)
 
 
 typeTag : Type -> Int
@@ -73,6 +111,181 @@ typeTag type_ =
 
         Group _ ->
             5
+
+
+label : Node -> String
+label node_ =
+    case node_.type_ of
+        Rect _ ->
+            "Rect"
+
+        RectFill _ ->
+            "RectFill"
+
+        XLine _ ->
+            "XLine"
+
+        YLine _ ->
+            "YLine"
+
+        Text _ ->
+            "Text"
+
+        Bitmap _ ->
+            "Bitmap"
+
+        Group _ ->
+            "Group"
+
+
+displayLabel : Node -> String
+displayLabel node_ =
+    label node_ ++ " \"" ++ node_.key ++ "\""
+
+
+pointInBounds : Int -> Int -> { a | x : Int, y : Int, w : Int, h : Int } -> Bool
+pointInBounds x y bounds =
+    (bounds.w > 0)
+        && (bounds.h > 0)
+        && (x >= bounds.x)
+        && (x < bounds.x + bounds.w)
+        && (y >= bounds.y)
+        && (y < bounds.y + bounds.h)
+
+
+textDrawsPixel : List Font -> Int -> Int -> { x : Int, y : Int, text : String, fontIndex : Int, color : Color } -> Bool
+textDrawsPixel fonts px py r =
+    case List.Extra.getAt r.fontIndex fonts of
+        Nothing ->
+            False
+
+        Just font ->
+            let
+                lineHeight =
+                    font.glyphHeight + font.extraLineHeight
+
+                hasChar c =
+                    let
+                        code =
+                            Char.toCode c
+                    in
+                    code >= font.asciiFirst && code <= font.asciiLast
+
+                go curX curY chars =
+                    case chars of
+                        [] ->
+                            False
+
+                        '\n' :: rest ->
+                            go r.x (curY + lineHeight) rest
+
+                        c :: rest ->
+                            let
+                                nextX =
+                                    curX
+                                        + (if hasChar c then
+                                            font.glyphWidth
+
+                                           else
+                                            0
+                                          )
+                            in
+                            if
+                                hasChar c
+                                    && px
+                                    >= curX
+                                    && px
+                                    < curX
+                                    + font.glyphWidth
+                                    && py
+                                    >= curY
+                                    && py
+                                    < curY
+                                    + font.glyphHeight
+                            then
+                                True
+
+                            else
+                                go nextX curY rest
+            in
+            go r.x r.y (String.toList r.text)
+
+
+nodeDrawsPixel : List Font -> Int -> Int -> Node -> Bool
+nodeDrawsPixel fonts px py node_ =
+    if not (pointInBounds px py node_.bbox) then
+        False
+
+    else
+        case node_.type_ of
+            Rect { x, y, w, h } ->
+                let
+                    x2 =
+                        x + w - 1
+
+                    y2 =
+                        y + h - 1
+                in
+                ((py == y || py == y2) && px >= x && px <= x2)
+                    || ((px == x || px == x2) && py >= y && py <= y2)
+
+            RectFill _ ->
+                True
+
+            XLine { x, y, len } ->
+                len > 0 && py == y && px >= x && px < x + len
+
+            YLine { x, y, len } ->
+                len > 0 && px == x && py >= y && py < y + len
+
+            Text r ->
+                textDrawsPixel fonts px py r
+
+            Bitmap _ ->
+                True
+
+            Group _ ->
+                False
+
+
+collectHitPaths : List Font -> Int -> Int -> List Int -> Node -> List (List Int)
+collectHitPaths fonts px py path node_ =
+    if not (pointInBounds px py node_.bbox) then
+        []
+
+    else
+        case node_.type_ of
+            Group { children } ->
+                children
+                    |> List.indexedMap
+                        (\i child ->
+                            collectHitPaths fonts px py (path ++ [ i ]) child
+                        )
+                    |> List.reverse
+                    |> List.concat
+
+            Text _ ->
+                [ path ]
+
+            Bitmap _ ->
+                [ path ]
+
+            Rect _ ->
+                [ path ]
+
+            RectFill _ ->
+                [ path ]
+
+            XLine _ ->
+                [ path ]
+
+            YLine _ ->
+                [ path ]
+
+
+hitPathsAtPixel : List Font -> Int -> Int -> Node -> List (List Int)
+hitPathsAtPixel fonts px py root =
+    collectHitPaths fonts px py [] root
 
 
 text : List Font -> String -> { x : Int, y : Int, text : String, fontIndex : Int, color : Color } -> Node
@@ -172,8 +385,6 @@ textMultilineSize font s =
         |> (\( maxW, lineW, lineCount ) ->
                 ( max maxW lineW, lineCount * lineHeight )
            )
-
-
 
 
 normalizeBitmapData : Int -> List Int -> List Int
@@ -427,8 +638,12 @@ jsonEncoder node_ =
                 ]
 
 
-jsonDecoder : List Font -> Decoder Node
-jsonDecoder fonts =
+jsonDecoder : ESP32 -> Decoder Node
+jsonDecoder esp32 =
+    let
+        fontCount =
+            List.length esp32.fonts
+    in
     Json.Decode.field "type" Json.Decode.string
         |> Json.Decode.andThen
             (\tag ->
@@ -473,12 +688,24 @@ jsonDecoder fonts =
 
                     "Text" ->
                         Json.Decode.succeed
-                            (\key x y t fontIndex color -> text fonts key { x = x, y = y, text = t, fontIndex = fontIndex, color = color })
+                            (\key x y t fontIndex color -> text esp32.fonts key { x = x, y = y, text = t, fontIndex = fontIndex, color = color })
                             |> Json.Decode.Extra.andMap (Json.Decode.field "key" Json.Decode.string)
                             |> Json.Decode.Extra.andMap (Json.Decode.field "x" Json.Decode.int)
                             |> Json.Decode.Extra.andMap (Json.Decode.field "y" Json.Decode.int)
                             |> Json.Decode.Extra.andMap (Json.Decode.field "text" Json.Decode.string)
-                            |> Json.Decode.Extra.andMap (Json.Decode.field "fontIndex" Json.Decode.int)
+                            |> Json.Decode.Extra.andMap
+                                (Json.Decode.field "fontIndex"
+                                    (Json.Decode.int
+                                        |> Json.Decode.andThen
+                                            (\i ->
+                                                if i >= fontCount then
+                                                    Json.Decode.fail ("fontIndex " ++ String.fromInt i ++ " was >= the font count " ++ String.fromInt fontCount)
+
+                                                else
+                                                    Json.Decode.succeed i
+                                            )
+                                    )
+                                )
                             |> Json.Decode.Extra.andMap (Json.Decode.field "color" Json.Decode.int)
 
                     "Bitmap" ->
@@ -494,20 +721,105 @@ jsonDecoder fonts =
                     "Group" ->
                         Json.Decode.succeed group
                             |> Json.Decode.Extra.andMap (Json.Decode.field "key" Json.Decode.string)
-                            |> Json.Decode.Extra.andMap (Json.Decode.field "children" (Json.Decode.list (Json.Decode.lazy (\_ -> jsonDecoder fonts))))
+                            |> Json.Decode.Extra.andMap (Json.Decode.field "children" (Json.Decode.list (Json.Decode.lazy (\_ -> jsonDecoder esp32))))
 
                     _ ->
                         Json.Decode.fail ("Unknown node type: " ++ tag)
             )
+        |> Json.Decode.andThen
+            (\decoded ->
+                case List.head (limitErrors esp32 decoded) of
+                    Just err ->
+                        Json.Decode.fail (decoderLimitErrorToString err)
+
+                    Nothing ->
+                        Json.Decode.succeed decoded
+            )
+
+
+limitErrors : ESP32 -> Node -> List LimitError
+limitErrors esp32 node_ =
+    let
+        totalNodes =
+            size node_
+
+        totalNodeError =
+            if totalNodes > esp32.maxTotalNodes then
+                [ MaxTotalNodesExceeded
+                    { maxTotalNodes = esp32.maxTotalNodes
+                    , actualTotalNodes = totalNodes
+                    }
+                ]
+
+            else
+                []
+    in
+    totalNodeError ++ collectGroupChildrenErrors esp32 node_
+
+
+collectGroupChildrenErrors : ESP32 -> Node -> List LimitError
+collectGroupChildrenErrors esp32 node_ =
+    case node_.type_ of
+        Group { children } ->
+            let
+                hereError =
+                    if List.length children > esp32.nodeGroupMaxChildren then
+                        [ NodeGroupMaxChildrenExceeded
+                            { groupKey = node_.key
+                            , maxChildren = esp32.nodeGroupMaxChildren
+                            , actualChildren = List.length children
+                            }
+                        ]
+
+                    else
+                        []
+            in
+            hereError ++ List.concatMap (collectGroupChildrenErrors esp32) children
+
+        Rect _ ->
+            []
+
+        RectFill _ ->
+            []
+
+        XLine _ ->
+            []
+
+        YLine _ ->
+            []
+
+        Text _ ->
+            []
+
+        Bitmap _ ->
+            []
+
+
+decoderLimitErrorToString : LimitError -> String
+decoderLimitErrorToString err =
+    case err of
+        MaxTotalNodesExceeded { maxTotalNodes, actualTotalNodes } ->
+            "Total node limit exceeded: max "
+                ++ String.fromInt maxTotalNodes
+                ++ ", got "
+                ++ String.fromInt actualTotalNodes
+
+        NodeGroupMaxChildrenExceeded { groupKey, maxChildren, actualChildren } ->
+            "Group child limit exceeded for key \""
+                ++ groupKey
+                ++ "\": max "
+                ++ String.fromInt maxChildren
+                ++ ", got "
+                ++ String.fromInt actualChildren
 
 
 nonnegativeIntDecoder : String -> Decoder Int
-nonnegativeIntDecoder label =
+nonnegativeIntDecoder fieldName =
     Json.Decode.int
         |> Json.Decode.andThen
             (\n ->
                 if n < 0 then
-                    Json.Decode.fail (label ++ " must be nonnegative")
+                    Json.Decode.fail (fieldName ++ " must be nonnegative")
 
                 else
                     Json.Decode.succeed n
@@ -588,3 +900,44 @@ bytesEncoder node_ =
                         ]
                )
         )
+
+
+size : Node -> Int
+size node_ =
+    case node_.type_ of
+        Group { children } ->
+            1 + List.sum (List.map size children)
+
+        _ ->
+            1
+
+
+maxGroupChildren : Node -> Int
+maxGroupChildren node_ =
+    case node_.type_ of
+        Group { children } ->
+            max (List.length children)
+                (Maybe.withDefault 0
+                    (List.maximum
+                        (List.map maxGroupChildren children)
+                    )
+                )
+
+        _ ->
+            0
+
+
+maxFontIndex : Node -> Int
+maxFontIndex node_ =
+    case node_.type_ of
+        Text r ->
+            r.fontIndex
+
+        Group { children } ->
+            Maybe.withDefault 0
+                (List.maximum
+                    (List.map maxFontIndex children)
+                )
+
+        _ ->
+            0

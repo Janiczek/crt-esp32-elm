@@ -1,7 +1,7 @@
 module NodeBinaryTests exposing (suite)
 
-import Bytes
 import Bitmap
+import Bytes
 import Bytes.Decode
 import Bytes.Decode.Extra
 import Bytes.Encode

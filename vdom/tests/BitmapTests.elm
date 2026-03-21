@@ -48,7 +48,12 @@ suite =
                           , [ 255, 255, 170 ]
                           )
                         , ( "BitDepth1 expands bits into black and white pixels"
-                          , ( ( BitDepth1, 5, 0 ), [ 0xB0 {- 0b10110000 -} ] )
+                          , ( ( BitDepth1, 5, 0 )
+                            , [ 0xB0
+
+                              {- 0b10110000 -}
+                              ]
+                            )
                           , [ 255, 0, 255, 255, 0 ]
                           )
                         , ( "BitDepth1 pads missing source bytes with zeros"
