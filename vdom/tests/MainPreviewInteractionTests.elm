@@ -79,7 +79,7 @@ suite =
             Fuzzers.zoom
             Fuzzers.esp32AndFittingNode
             "right click opens a layer menu and can select a lower layer"
-            -- TODO this test is very slow
+          -- TODO this test is very slow
           <|
             \zoom ( esp32, node ) ->
                 let
@@ -131,6 +131,19 @@ suite =
                     clickCase.scenario.root
                     |> leftClick clickCase.esp32 clickCase.zoom clickCase.clickX clickCase.clickY
                     |> expectSelected clickCase.scenario.textHash
+        , Test.fuzz
+            (scenarioClickFuzzer rectScenario)
+            "click on node A then mousedown on node B doesn't change selection mousedown without subsequent click does not change selection"
+          <|
+            \clickCase ->
+                start clickCase.zoom clickCase.esp32 clickCase.scenario.root
+                    |> leftClick clickCase.esp32 clickCase.zoom clickCase.clickX clickCase.clickY
+                    |> previewMouseDown
+                        clickCase.esp32
+                        clickCase.zoom
+                        clickCase.scenario.mouseDownOtherX
+                        clickCase.scenario.mouseDownOtherY
+                    |> expectSelected clickCase.scenario.topHash
         , Test.fuzz
             clickSequenceCaseFuzzer
             "after any click sequence, preview has at most one selected node"
@@ -255,14 +268,18 @@ type alias ScenarioClick scenario =
 
 
 scenarioClickFuzzer :
-    (ESP32 -> Node -> { scenario | hitBbox : BoundingBox })
-    -> Fuzzer (ScenarioClick { scenario | hitBbox : BoundingBox })
+    (ESP32 -> Node -> { scenario | hitBbox : BoundingBox, previewEsp32 : ESP32 })
+    -> Fuzzer (ScenarioClick { scenario | hitBbox : BoundingBox, previewEsp32 : ESP32 })
 scenarioClickFuzzer toScenario =
     Fuzz.map2
         (\zoom ( esp32, node ) ->
+            let
+                scenario =
+                    toScenario esp32 node
+            in
             { zoom = zoom
-            , esp32 = esp32
-            , scenario = toScenario esp32 node
+            , esp32 = scenario.previewEsp32
+            , scenario = scenario
             , clickX = 0
             , clickY = 0
             }
@@ -402,6 +419,7 @@ type alias OverlapBboxScenario =
     , hitBbox : BoundingBox
     , lowerLabel : String
     , upperLabel : String
+    , previewEsp32 : ESP32
     }
 
 
@@ -409,17 +427,33 @@ type alias BboxSelectScenario =
     { root : Node
     , hitBbox : BoundingBox
     , topHash : String
+    , mouseDownOtherX : Int
+    , mouseDownOtherY : Int
+    , previewEsp32 : ESP32
     }
 
 
 rectScenario : ESP32 -> Node -> BboxSelectScenario
 rectScenario esp32 base =
     let
-        vc =
+        vcBefore =
             ESP32.videoConstants esp32
 
-        outline =
-            Node.rect "bbox-outline"
+        layoutBbox =
+            { x = vcBefore.xMin
+            , y = vcBefore.yMin
+            , w = 8
+            , h = 4
+            }
+
+        esp32_ =
+            ESP32.growToAccommodate layoutBbox esp32
+
+        vc =
+            ESP32.videoConstants esp32_
+
+        leftRect =
+            Node.rect "bbox-left"
                 { x = vc.xMin
                 , y = vc.yMin
                 , w = 4
@@ -427,12 +461,24 @@ rectScenario esp32 base =
                 , color = Color.white
                 }
 
+        rightRect =
+            Node.rect "bbox-right"
+                { x = vc.xMin + 4
+                , y = vc.yMin
+                , w = 4
+                , h = 4
+                , color = Color.white
+                }
+
         root =
-            appendInjected (asGroup base) [ outline ]
+            appendInjected (asGroup base) [ rightRect, leftRect ]
     in
     { root = root
-    , hitBbox = outline.bbox
-    , topHash = String.fromInt outline.hash
+    , hitBbox = leftRect.bbox
+    , topHash = String.fromInt leftRect.hash
+    , mouseDownOtherX = rightRect.bbox.x + rightRect.bbox.w // 2
+    , mouseDownOtherY = rightRect.bbox.y + rightRect.bbox.h // 2
+    , previewEsp32 = esp32_
     }
 
 
@@ -467,6 +513,7 @@ overlapBboxScenario esp32 base =
     , hitBbox = outline.bbox
     , lowerLabel = nodeMenuLabel fill
     , upperLabel = nodeMenuLabel outline
+    , previewEsp32 = esp32
     }
 
 
@@ -474,6 +521,7 @@ type alias GroupMenuScenario =
     { root : Node
     , hitBbox : BoundingBox
     , menuRoot : Node
+    , previewEsp32 : ESP32
     }
 
 
@@ -501,6 +549,7 @@ withGroupMenuScenario esp32 _ =
     { root = root
     , hitBbox = child.bbox
     , menuRoot = menuRoot
+    , previewEsp32 = esp32
     }
 
 
@@ -554,6 +603,7 @@ type alias TextScenario =
     { root : Node
     , hitBbox : BoundingBox
     , textHash : String
+    , previewEsp32 : ESP32
     }
 
 
@@ -579,6 +629,7 @@ withTextScenario esp32 base =
     { root = root
     , hitBbox = textNode.bbox
     , textHash = String.fromInt textNode.hash
+    , previewEsp32 = esp32
     }
 
 
@@ -637,6 +688,8 @@ connectedModel config =
         , selectedPath = Nothing
         , previewMenu = Nothing
         , previewZoom = config.previewZoom
+        , previewDrag = Nothing
+        , previewIgnoreClick = False
         }
 
 
@@ -726,6 +779,17 @@ leftClick :
     -> ProgramTest.ProgramTest Main.Model Main.Msg (Cmd Main.Msg)
 leftClick esp32 zoom x y =
     previewClick esp32 zoom "click" x y 0
+
+
+previewMouseDown :
+    ESP32
+    -> Int
+    -> Int
+    -> Int
+    -> ProgramTest.ProgramTest Main.Model Main.Msg (Cmd Main.Msg)
+    -> ProgramTest.ProgramTest Main.Model Main.Msg (Cmd Main.Msg)
+previewMouseDown esp32 zoom x y =
+    previewClick esp32 zoom "mousedown" x y 0
 
 
 rightClick :

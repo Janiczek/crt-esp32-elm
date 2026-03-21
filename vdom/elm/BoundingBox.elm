@@ -1,4 +1,4 @@
-module BoundingBox exposing (BoundingBox, empty, union)
+module BoundingBox exposing (BoundingBox, contains, empty, union)
 
 
 type alias BoundingBox =
@@ -16,6 +16,18 @@ empty =
     , w = 0
     , h = 0
     }
+
+
+{-| Half-open rectangle; false when width or height is non-positive.
+-}
+contains : Int -> Int -> BoundingBox -> Bool
+contains x y box =
+    (box.w > 0)
+        && (box.h > 0)
+        && (x >= box.x)
+        && (x < box.x + box.w)
+        && (y >= box.y)
+        && (y < box.y + box.h)
 
 
 union : BoundingBox -> BoundingBox -> BoundingBox

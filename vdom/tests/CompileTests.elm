@@ -11,6 +11,7 @@ import FNV1a
 import Font
 import Main
 import Node
+import PreviewDrag
 import Test exposing (Test)
 
 
@@ -85,6 +86,13 @@ suite =
                 let
                     _ =
                         Node.Node
+                in
+                Expect.pass
+        , Test.test "PreviewDrag" <|
+            \() ->
+                let
+                    _ =
+                        PreviewDrag.clampedNodeXYFromClientDrag
                 in
                 Expect.pass
         ]

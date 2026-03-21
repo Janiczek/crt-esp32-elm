@@ -18,19 +18,20 @@ module Node exposing
     , maxFontIndex
     , maxGroupChildren
     , nodeDrawsPixel
-    , pointInBounds
     , rect
     , rectFill
     , size
     , text
     , textDrawsPixel
+    , topLeftXY
+    , typeWithNewXY
     , xLine
     , yLine
     )
 
 import Bitmap exposing (BitDepth)
 import Bitwise
-import BoundingBox exposing (BoundingBox)
+import BoundingBox exposing (BoundingBox, contains)
 import Bytes exposing (Endianness(..))
 import Bytes.Encode
 import BytesExtraExtra
@@ -143,14 +144,63 @@ displayLabel node_ =
     label node_ ++ " \"" ++ node_.key ++ "\""
 
 
-pointInBounds : Int -> Int -> { a | x : Int, y : Int, w : Int, h : Int } -> Bool
-pointInBounds x y bounds =
-    (bounds.w > 0)
-        && (bounds.h > 0)
-        && (x >= bounds.x)
-        && (x < bounds.x + bounds.w)
-        && (y >= bounds.y)
-        && (y < bounds.y + bounds.h)
+{-| The `(x, y)` stored on each leaf `Type` (same fields `typeWithNewXY` edits).
+
+We use this instead of `Node.bbox` because bbox is derived (union of children, text metrics, etc.)
+and is not what the editor moves when changing position — that is always the type’s own `x`/`y`.
+`Group` has no such pair on `Type`, only children, so this returns `Nothing`.
+
+-}
+topLeftXY : Type -> Maybe ( Int, Int )
+topLeftXY type_ =
+    case type_ of
+        Rect r ->
+            Just ( r.x, r.y )
+
+        RectFill r ->
+            Just ( r.x, r.y )
+
+        XLine r ->
+            Just ( r.x, r.y )
+
+        YLine r ->
+            Just ( r.x, r.y )
+
+        Text r ->
+            Just ( r.x, r.y )
+
+        Bitmap r ->
+            Just ( r.x, r.y )
+
+        Group _ ->
+            Nothing
+
+
+{-| Leaf types get new `x`/`y`; `Group` is returned unchanged.
+-}
+typeWithNewXY : Int -> Int -> Type -> Type
+typeWithNewXY x y type_ =
+    case type_ of
+        Rect r ->
+            Rect { r | x = x, y = y }
+
+        RectFill r ->
+            RectFill { r | x = x, y = y }
+
+        XLine r ->
+            XLine { r | x = x, y = y }
+
+        YLine r ->
+            YLine { r | x = x, y = y }
+
+        Text r ->
+            Text { r | x = x, y = y }
+
+        Bitmap r ->
+            Bitmap { r | x = x, y = y }
+
+        Group _ ->
+            type_
 
 
 textDrawsPixel : List Font -> Int -> Int -> { x : Int, y : Int, text : String, fontIndex : Int, color : Color } -> Bool
@@ -213,7 +263,7 @@ textDrawsPixel fonts px py r =
 
 nodeDrawsPixel : List Font -> Int -> Int -> Node -> Bool
 nodeDrawsPixel fonts px py node_ =
-    if not (pointInBounds px py node_.bbox) then
+    if not (contains px py node_.bbox) then
         False
 
     else
@@ -250,7 +300,7 @@ nodeDrawsPixel fonts px py node_ =
 
 collectHitPaths : List Font -> Int -> Int -> List Int -> Node -> List (List Int)
 collectHitPaths fonts px py path node_ =
-    if not (pointInBounds px py node_.bbox) then
+    if not (contains px py node_.bbox) then
         []
 
     else

@@ -11,7 +11,6 @@ of changing the C source code and recompiling+reflashing. Also it's pretty cool.
 TODO:
 
   - [ ] edit font data
-  - [ ] drag'n'drop nodes
   - [ ] upload images and convert them to greyscale bitmap
       - [ ] dithering formats? Applicable for non-BitDepth1?
 
@@ -26,6 +25,7 @@ import Bitmap.Bd4_256_16_TestStrip
 import Bitmap.Bd4_64_64_Duke
 import Bitmap.Bd8_256_16_TestStrip
 import Bitmap.Bd8_64_64_Duke
+import BoundingBox
 import Browser exposing (Document)
 import Browser.Events
 import Bytes exposing (Bytes)
@@ -40,11 +40,12 @@ import Html exposing (Html)
 import Html.Attributes
 import Html.Attributes.Extra
 import Html.Events
-import Json.Decode as Decode
-import Json.Encode as Encode
+import Json.Decode
+import Json.Encode
 import List.Extra
 import Node exposing (Node, Type(..))
 import Path
+import PreviewDrag
 import Set
 import Svg exposing (Svg)
 import Svg.Attributes
@@ -144,6 +145,21 @@ type alias ModelConnected =
     , selectedPath : Maybe (List Int)
     , previewMenu : Maybe PreviewMenu
     , previewZoom : Int
+    , previewDrag : Maybe PreviewDragState
+    , {- the next PreviewClicked should not run normal click-to-select logic
+         (we have _just_ dragged a node at least 1px but click will still happen
+         right after that mouseup)
+      -}
+      previewIgnoreClick : Bool
+    }
+
+
+type alias PreviewDragState =
+    { path : List Int
+    , key : String
+    , startClient : ( Float, Float )
+    , startNodeXY : ( Int, Int )
+    , moved : Bool
     }
 
 
@@ -170,6 +186,9 @@ type MsgConnected
     = SelectNode (Maybe (List Int))
     | PreviewClicked Int Int
     | PreviewContextMenuRequested Int Int
+    | PreviewDragMouseDown { videoX : Int, videoY : Int, clientX : Float, clientY : Float }
+    | PreviewDragMove { clientX : Float, clientY : Float }
+    | PreviewDragEnd
     | UpdateNodeAtPath (List Int) String Type
     | InsertChild (List Int) Int Type
     | RemoveNode (List Int)
@@ -382,7 +401,7 @@ encodeNodeJson : Node -> String
 encodeNodeJson node =
     node
         |> Node.jsonEncoder
-        |> Encode.encode 0
+        |> Json.Encode.encode 0
 
 
 {-| The throttle logic in subscriptions will automatically pick this up and send a command.
@@ -434,6 +453,12 @@ commitNewRootNodeLocal newRoot modelConnected =
         | rootNode = RootSynced { root = newRoot }
         , rootNodeJsonText = encodeNodeJson newRoot
         , rootNodeJsonError = Nothing
+    }
+
+
+type alias ConnectedUpdateConfig =
+    { commitRoot : Node -> ModelConnected -> ModelConnected
+    , syncToDevice : Bool
     }
 
 
@@ -505,6 +530,8 @@ update msg model =
                 , selectedPath = Nothing
                 , previewMenu = Nothing
                 , previewZoom = 3
+                , previewDrag = Nothing
+                , previewIgnoreClick = False
                 }
             , Cmd.none
             )
@@ -594,6 +621,8 @@ update msg model =
                 , selectedPath = Nothing
                 , previewMenu = Nothing
                 , previewZoom = 3
+                , previewDrag = Nothing
+                , previewIgnoreClick = False
                 }
             , Cmd.none
             )
@@ -658,31 +687,59 @@ update msg model =
 
 
 updateConnected : MsgConnected -> ModelConnected -> ( ModelConnected, Cmd MsgConnected )
-updateConnected msgConnected modelConnected =
+updateConnected =
+    updateConnected_
+        { commitRoot = commitNewRootNode
+        , syncToDevice = True
+        }
+
+
+updateConnectedLocal : MsgConnected -> ModelConnected -> ( ModelConnected, Cmd MsgConnected )
+updateConnectedLocal =
+    updateConnected_
+        { commitRoot = commitNewRootNodeLocal
+        , syncToDevice = False
+        }
+
+
+updateConnected_ :
+    ConnectedUpdateConfig
+    -> MsgConnected
+    -> ModelConnected
+    -> ( ModelConnected, Cmd MsgConnected )
+updateConnected_ cfg msgConnected modelConnected =
     case msgConnected of
         SelectNode path ->
             ( { modelConnected
                 | selectedPath = path
                 , previewMenu = Nothing
+                , previewDrag = Nothing
+                , previewIgnoreClick = False
               }
             , Cmd.none
             )
 
         PreviewClicked x y ->
-            let
-                hits =
-                    Node.hitPathsAtPixel
-                        modelConnected.esp32.fonts
-                        x
-                        y
-                        (desiredRoot modelConnected.rootNode)
-            in
-            ( { modelConnected
-                | selectedPath = List.head hits
-                , previewMenu = Nothing
-              }
-            , Cmd.none
-            )
+            if modelConnected.previewIgnoreClick then
+                ( { modelConnected | previewIgnoreClick = False }
+                , Cmd.none
+                )
+
+            else
+                let
+                    hits =
+                        Node.hitPathsAtPixel
+                            modelConnected.esp32.fonts
+                            x
+                            y
+                            (desiredRoot modelConnected.rootNode)
+                in
+                ( { modelConnected
+                    | selectedPath = List.head hits
+                    , previewMenu = Nothing
+                  }
+                , Cmd.none
+                )
 
         PreviewContextMenuRequested x y ->
             let
@@ -712,6 +769,21 @@ updateConnected msgConnected modelConnected =
                   }
                 , Cmd.none
                 )
+
+        PreviewDragMouseDown { videoX, videoY, clientX, clientY } ->
+            ( tryStartPreviewDrag videoX videoY clientX clientY modelConnected
+            , Cmd.none
+            )
+
+        PreviewDragMove { clientX, clientY } ->
+            ( applyPreviewDragMove cfg.commitRoot clientX clientY modelConnected
+            , Cmd.none
+            )
+
+        PreviewDragEnd ->
+            ( applyPreviewDragEnd modelConnected
+            , Cmd.none
+            )
 
         UpdateNodeAtPath path key type_ ->
             let
@@ -751,7 +823,7 @@ updateConnected msgConnected modelConnected =
                             desiredRoot modelConnected.rootNode
             in
             ( { modelConnected | previewMenu = Nothing }
-                |> commitNewRootNode newRoot
+                |> cfg.commitRoot newRoot
             , Cmd.none
             )
 
@@ -771,8 +843,8 @@ updateConnected msgConnected modelConnected =
                     ( { modelConnected | previewMenu = Nothing }, Cmd.none )
 
                 Nothing ->
-                    ( { modelConnected | previewMenu = Nothing }
-                        |> commitNewRootNode newRoot
+                    ( { modelConnected | previewMenu = Nothing, previewDrag = Nothing }
+                        |> cfg.commitRoot newRoot
                     , Cmd.none
                     )
 
@@ -793,8 +865,9 @@ updateConnected msgConnected modelConnected =
                                     Just selectedPath
                             )
                 , previewMenu = Nothing
+                , previewDrag = Nothing
               }
-                |> commitNewRootNode newRoot
+                |> cfg.commitRoot newRoot
             , Cmd.none
             )
 
@@ -802,22 +875,23 @@ updateConnected msgConnected modelConnected =
             ( { modelConnected
                 | previewZoom = zoom
                 , previewMenu = Nothing
+                , previewDrag = Nothing
               }
             , Cmd.none
             )
 
         SetRootNodeJsonText text ->
-            case Decode.decodeString (Node.jsonDecoder modelConnected.esp32) text of
+            case Json.Decode.decodeString (Node.jsonDecoder modelConnected.esp32) text of
                 Ok parsed ->
-                    ( { modelConnected | previewMenu = Nothing }
-                        |> commitNewRootNode parsed
+                    ( { modelConnected | previewMenu = Nothing, previewDrag = Nothing }
+                        |> cfg.commitRoot parsed
                     , Cmd.none
                     )
 
                 Err err ->
                     ( { modelConnected
                         | rootNodeJsonText = text
-                        , rootNodeJsonError = Just (Decode.errorToString err)
+                        , rootNodeJsonError = Just (Json.Decode.errorToString err)
                         , previewMenu = Nothing
                       }
                     , Cmd.none
@@ -828,255 +902,78 @@ updateConnected msgConnected modelConnected =
                 | rootNodeJsonText = encodeNodeJson (desiredRoot modelConnected.rootNode)
                 , rootNodeJsonError = Nothing
                 , previewMenu = Nothing
+                , previewDrag = Nothing
               }
             , Cmd.none
             )
 
         ThrottleFrame ->
-            case modelConnected.rootNode of
-                RootSynced _ ->
-                    ( modelConnected, Cmd.none )
+            if cfg.syncToDevice then
+                case modelConnected.rootNode of
+                    RootSynced _ ->
+                        ( modelConnected, Cmd.none )
 
-                RootThrottled r ->
-                    if r.ackedRoot.hash == r.desiredRoot.hash then
-                        ( { modelConnected | rootNode = RootSynced { root = r.desiredRoot } }
-                        , Cmd.none
-                        )
+                    RootThrottled r ->
+                        if r.ackedRoot.hash == r.desiredRoot.hash then
+                            ( { modelConnected | rootNode = RootSynced { root = r.desiredRoot } }
+                            , Cmd.none
+                            )
 
-                    else
-                        ( { modelConnected
-                            | rootNode =
-                                RootAwaitingAck
-                                    { ackedRoot = r.ackedRoot
-                                    , inFlightRoot = r.desiredRoot
-                                    }
-                          }
-                        , setRootNode modelConnected.esp32 modelConnected.videoConstants r.ackedRoot r.desiredRoot
-                        )
+                        else
+                            ( { modelConnected
+                                | rootNode =
+                                    RootAwaitingAck
+                                        { ackedRoot = r.ackedRoot
+                                        , inFlightRoot = r.desiredRoot
+                                        }
+                              }
+                            , setRootNode modelConnected.esp32 modelConnected.videoConstants r.ackedRoot r.desiredRoot
+                            )
 
-                RootAwaitingAck _ ->
-                    ( modelConnected, Cmd.none )
+                    RootAwaitingAck _ ->
+                        ( modelConnected, Cmd.none )
 
-                RootAwaitingAckWithPending _ ->
-                    -- Can't send while waiting for ACK; keep the latest desired root queued.
-                    ( modelConnected, Cmd.none )
-
-        RootNodeAcked ->
-            case modelConnected.rootNode of
-                RootAwaitingAck { inFlightRoot } ->
-                    ( { modelConnected | rootNode = RootSynced { root = inFlightRoot } }
-                    , Cmd.none
-                    )
-
-                RootAwaitingAckWithPending r ->
-                    let
-                        acked =
-                            r.inFlightRoot
-                    in
-                    if r.desiredRoot.hash == acked.hash then
-                        ( { modelConnected | rootNode = RootSynced { root = r.desiredRoot } }
-                        , Cmd.none
-                        )
-
-                    else
-                        ( { modelConnected
-                            | rootNode =
-                                RootThrottled
-                                    { ackedRoot = acked
-                                    , desiredRoot = r.desiredRoot
-                                    }
-                          }
-                        , Cmd.none
-                        )
-
-                _ ->
-                    ( modelConnected, Cmd.none )
-
-
-updateConnectedLocal : MsgConnected -> ModelConnected -> ( ModelConnected, Cmd MsgConnected )
-updateConnectedLocal msgConnected modelConnected =
-    case msgConnected of
-        SelectNode path ->
-            ( { modelConnected
-                | selectedPath = path
-                , previewMenu = Nothing
-              }
-            , Cmd.none
-            )
-
-        PreviewClicked x y ->
-            let
-                hits =
-                    Node.hitPathsAtPixel
-                        modelConnected.esp32.fonts
-                        x
-                        y
-                        (desiredRoot modelConnected.rootNode)
-            in
-            ( { modelConnected
-                | selectedPath = List.head hits
-                , previewMenu = Nothing
-              }
-            , Cmd.none
-            )
-
-        PreviewContextMenuRequested x y ->
-            let
-                hits =
-                    Node.hitPathsAtPixel
-                        modelConnected.esp32.fonts
-                        x
-                        y
-                        (desiredRoot modelConnected.rootNode)
-            in
-            if List.isEmpty hits then
-                ( { modelConnected
-                    | selectedPath = Nothing
-                    , previewMenu = Nothing
-                  }
-                , Cmd.none
-                )
+                    RootAwaitingAckWithPending _ ->
+                        -- Can't send while waiting for ACK; keep the latest desired root queued.
+                        ( modelConnected, Cmd.none )
 
             else
-                ( { modelConnected
-                    | previewMenu =
-                        Just
-                            { x = x
-                            , y = y
-                            , paths = hits
-                            }
-                  }
-                , Cmd.none
-                )
-
-        UpdateNodeAtPath path key type_ ->
-            let
-                existing =
-                    Path.getNodeAtPath path (desiredRoot modelConnected.rootNode)
-
-                newRoot =
-                    case existing of
-                        Just _ ->
-                            let
-                                newNode =
-                                    case type_ of
-                                        Group _ ->
-                                            case existing of
-                                                Just n ->
-                                                    case n.type_ of
-                                                        Node.Group { children } ->
-                                                            Node.group key children
-
-                                                        _ ->
-                                                            Node.group key []
-
-                                                Nothing ->
-                                                    Node.group key []
-
-                                        _ ->
-                                            case existing of
-                                                Just _ ->
-                                                    Node.fromKeyAndType modelConnected.esp32.fonts key type_
-
-                                                Nothing ->
-                                                    desiredRoot modelConnected.rootNode
-                            in
-                            Path.setNodeAtPath path newNode (desiredRoot modelConnected.rootNode)
-
-                        Nothing ->
-                            desiredRoot modelConnected.rootNode
-            in
-            ( { modelConnected | previewMenu = Nothing }
-                |> commitNewRootNodeLocal newRoot
-            , Cmd.none
-            )
-
-        InsertChild parentPath index type_ ->
-            let
-                newRoot =
-                    Path.insertChildAtPath
-                        parentPath
-                        index
-                        (defaultNodeForType modelConnected.esp32.fonts modelConnected.videoConstants type_)
-                        (desiredRoot modelConnected.rootNode)
-            in
-            case List.head (Node.limitErrors modelConnected.esp32 newRoot) of
-                Just _ ->
-                    ( { modelConnected | previewMenu = Nothing }, Cmd.none )
-
-                Nothing ->
-                    ( { modelConnected | previewMenu = Nothing }
-                        |> commitNewRootNodeLocal
-                            (Path.insertChildAtPath
-                                parentPath
-                                index
-                                (defaultNodeForType modelConnected.esp32.fonts modelConnected.videoConstants type_)
-                                (desiredRoot modelConnected.rootNode)
-                            )
-                    , Cmd.none
-                    )
-
-        RemoveNode path ->
-            let
-                newRoot =
-                    Path.removeNodeAtPath path (desiredRoot modelConnected.rootNode)
-            in
-            ( { modelConnected
-                | selectedPath =
-                    modelConnected.selectedPath
-                        |> Maybe.andThen
-                            (\selectedPath ->
-                                if path |> List.Extra.isPrefixOf selectedPath then
-                                    Nothing
-
-                                else
-                                    Just selectedPath
-                            )
-                , previewMenu = Nothing
-              }
-                |> commitNewRootNodeLocal newRoot
-            , Cmd.none
-            )
-
-        SetPreviewZoom zoom ->
-            ( { modelConnected
-                | previewZoom = zoom
-                , previewMenu = Nothing
-              }
-            , Cmd.none
-            )
-
-        SetRootNodeJsonText text ->
-            case Decode.decodeString (Node.jsonDecoder modelConnected.esp32) text of
-                Ok parsed ->
-                    ( { modelConnected | previewMenu = Nothing }
-                        |> commitNewRootNodeLocal parsed
-                    , Cmd.none
-                    )
-
-                Err err ->
-                    ( { modelConnected
-                        | rootNodeJsonText = text
-                        , rootNodeJsonError = Just (Decode.errorToString err)
-                        , previewMenu = Nothing
-                      }
-                    , Cmd.none
-                    )
-
-        RestoreRootNodeJson ->
-            ( { modelConnected
-                | rootNodeJsonText = encodeNodeJson (desiredRoot modelConnected.rootNode)
-                , rootNodeJsonError = Nothing
-                , previewMenu = Nothing
-              }
-            , Cmd.none
-            )
-
-        ThrottleFrame ->
-            ( modelConnected, Cmd.none )
+                ( modelConnected, Cmd.none )
 
         RootNodeAcked ->
-            ( modelConnected, Cmd.none )
+            if cfg.syncToDevice then
+                case modelConnected.rootNode of
+                    RootAwaitingAck { inFlightRoot } ->
+                        ( { modelConnected | rootNode = RootSynced { root = inFlightRoot } }
+                        , Cmd.none
+                        )
+
+                    RootAwaitingAckWithPending r ->
+                        let
+                            acked =
+                                r.inFlightRoot
+                        in
+                        if r.desiredRoot.hash == acked.hash then
+                            ( { modelConnected | rootNode = RootSynced { root = r.desiredRoot } }
+                            , Cmd.none
+                            )
+
+                        else
+                            ( { modelConnected
+                                | rootNode =
+                                    RootThrottled
+                                        { ackedRoot = acked
+                                        , desiredRoot = r.desiredRoot
+                                        }
+                              }
+                            , Cmd.none
+                            )
+
+                    _ ->
+                        ( modelConnected, Cmd.none )
+
+            else
+                ( modelConnected, Cmd.none )
 
 
 setRootNode : ESP32 -> VideoConstants -> Node -> Node -> Cmd MsgConnected
@@ -1229,25 +1126,212 @@ viewInitialLoadProgress progress =
         ]
 
 
-previewPointDecoder : VideoConstants -> Int -> Decode.Decoder ( Int, Int )
+previewPointDecoder : VideoConstants -> Int -> Json.Decode.Decoder ( Int, Int )
 previewPointDecoder vc zoom =
     let
         zoom_ =
             max 1 zoom
 
         coordinateDecoder field min_ max_ =
-            Decode.oneOf
-                [ Decode.field field Decode.float
-                , Decode.field field Decode.int |> Decode.map toFloat
+            Json.Decode.oneOf
+                [ Json.Decode.field field Json.Decode.float
+                , Json.Decode.field field Json.Decode.int |> Json.Decode.map toFloat
                 ]
-                |> Decode.map
+                |> Json.Decode.map
                     (\offset ->
                         clamp min_ max_ (min_ + (floor offset // zoom_))
                     )
     in
-    Decode.map2 Tuple.pair
+    Json.Decode.map2 Tuple.pair
         (coordinateDecoder "offsetX" vc.xMin vc.xMax)
         (coordinateDecoder "offsetY" vc.yMin vc.yMax)
+
+
+previewDragMouseDownDecoder : VideoConstants -> Int -> Json.Decode.Decoder Msg
+previewDragMouseDownDecoder vc zoom =
+    previewPointDecoder vc zoom
+        |> Json.Decode.andThen
+            (\( vx, vy ) ->
+                Json.Decode.map2 Tuple.pair
+                    (Json.Decode.map2 Tuple.pair
+                        (Json.Decode.field "clientX" Json.Decode.float)
+                        (Json.Decode.field "clientY" Json.Decode.float)
+                    )
+                    (Json.Decode.field "button" Json.Decode.int)
+                    |> Json.Decode.andThen
+                        (\( ( cx, cy ), btn ) ->
+                            if btn == 0 then
+                                Json.Decode.succeed
+                                    (MsgConnected
+                                        (PreviewDragMouseDown
+                                            { videoX = vx, videoY = vy, clientX = cx, clientY = cy }
+                                        )
+                                    )
+
+                            else
+                                Json.Decode.fail "not primary button"
+                        )
+            )
+
+
+previewDragMoveDecoder : Json.Decode.Decoder Msg
+previewDragMoveDecoder =
+    Json.Decode.map2 (\cx cy -> MsgConnected (PreviewDragMove { clientX = cx, clientY = cy }))
+        (Json.Decode.oneOf
+            [ Json.Decode.field "clientX" Json.Decode.float
+            , Json.Decode.field "clientX" Json.Decode.int |> Json.Decode.map toFloat
+            ]
+        )
+        (Json.Decode.oneOf
+            [ Json.Decode.field "clientY" Json.Decode.float
+            , Json.Decode.field "clientY" Json.Decode.int |> Json.Decode.map toFloat
+            ]
+        )
+
+
+tryStartPreviewDrag : Int -> Int -> Float -> Float -> ModelConnected -> ModelConnected
+tryStartPreviewDrag videoX videoY clientX clientY modelConnected =
+    case modelConnected.selectedPath of
+        Nothing ->
+            modelConnected
+
+        Just path ->
+            let
+                root =
+                    desiredRoot modelConnected.rootNode
+            in
+            case Path.getNodeAtPath path root of
+                Nothing ->
+                    modelConnected
+
+                Just node ->
+                    case node.type_ of
+                        Group _ ->
+                            modelConnected
+
+                        _ ->
+                            let
+                                bbox =
+                                    node.bbox
+                            in
+                            if BoundingBox.contains videoX videoY bbox then
+                                case Node.topLeftXY node.type_ of
+                                    Nothing ->
+                                        modelConnected
+
+                                    Just startXY ->
+                                        { modelConnected
+                                            | previewMenu = Nothing
+                                            , previewDrag =
+                                                Just
+                                                    { path = path
+                                                    , key = node.key
+                                                    , startClient = ( clientX, clientY )
+                                                    , startNodeXY = startXY
+                                                    , moved = False
+                                                    }
+                                        }
+
+                            else
+                                modelConnected
+
+
+applyPreviewDragMove :
+    (Node -> ModelConnected -> ModelConnected)
+    -> Float
+    -> Float
+    -> ModelConnected
+    -> ModelConnected
+applyPreviewDragMove commitRoot clientX clientY modelConnected =
+    case modelConnected.previewDrag of
+        Nothing ->
+            modelConnected
+
+        Just drag ->
+            let
+                root =
+                    desiredRoot modelConnected.rootNode
+            in
+            case Path.getNodeAtPath drag.path root of
+                Nothing ->
+                    { modelConnected | previewDrag = Nothing }
+
+                Just node ->
+                    if node.key /= drag.key then
+                        { modelConnected | previewDrag = Nothing }
+
+                    else
+                        case node.type_ of
+                            Group _ ->
+                                { modelConnected | previewDrag = Nothing }
+
+                            _ ->
+                                case Node.topLeftXY node.type_ of
+                                    Nothing ->
+                                        { modelConnected | previewDrag = Nothing }
+
+                                    Just ( curX, curY ) ->
+                                        let
+                                            ( newX, newY ) =
+                                                PreviewDrag.clampedNodeXYFromClientDrag
+                                                    modelConnected.videoConstants
+                                                    modelConnected.previewZoom
+                                                    drag.startClient
+                                                    ( clientX, clientY )
+                                                    drag.startNodeXY
+
+                                            newMoved =
+                                                drag.moved
+                                                    || (( newX, newY ) /= drag.startNodeXY)
+
+                                            nextDrag =
+                                                Just { drag | moved = newMoved }
+
+                                            newType =
+                                                Node.typeWithNewXY newX newY node.type_
+                                        in
+                                        if newX == curX && newY == curY then
+                                            { modelConnected | previewDrag = nextDrag }
+
+                                        else
+                                            let
+                                                newNode =
+                                                    Node.fromKeyAndType modelConnected.esp32.fonts node.key newType
+
+                                                newRoot =
+                                                    Path.setNodeAtPath drag.path newNode root
+                                            in
+                                            { modelConnected
+                                                | previewMenu = Nothing
+                                                , previewDrag = nextDrag
+                                            }
+                                                |> commitRoot newRoot
+
+
+applyPreviewDragEnd : ModelConnected -> ModelConnected
+applyPreviewDragEnd modelConnected =
+    case modelConnected.previewDrag of
+        Nothing ->
+            modelConnected
+
+        Just drag ->
+            { modelConnected
+                | previewDrag = Nothing
+                , previewIgnoreClick = drag.moved
+            }
+
+
+previewDragSubscriptions : Maybe PreviewDragState -> Sub Msg
+previewDragSubscriptions drag =
+    case drag of
+        Nothing ->
+            Sub.none
+
+        Just _ ->
+            Sub.batch
+                [ Browser.Events.onMouseMove previewDragMoveDecoder
+                , Browser.Events.onMouseUp (Json.Decode.succeed (MsgConnected PreviewDragEnd))
+                ]
 
 
 selectionBorderView : VideoConstants -> Int -> Maybe Node -> Html msg
@@ -1380,11 +1464,11 @@ viewPreviewColumn model =
 
         clickDecoder =
             previewPointDecoder vc zoom
-                |> Decode.map (\( x, y ) -> MsgConnected (PreviewClicked x y))
+                |> Json.Decode.map (\( x, y ) -> MsgConnected (PreviewClicked x y))
 
         contextMenuDecoder =
             previewPointDecoder vc zoom
-                |> Decode.map
+                |> Json.Decode.map
                     (\( x, y ) ->
                         ( MsgConnected (PreviewContextMenuRequested x y)
                         , True
@@ -1431,6 +1515,7 @@ viewPreviewColumn model =
                 , Html.Attributes.style "width" (String.fromInt zoomedW ++ "px")
                 , Html.Attributes.style "height" (String.fromInt zoomedH ++ "px")
                 , Html.Events.on "click" clickDecoder
+                , Html.Events.on "mousedown" (previewDragMouseDownDecoder vc zoom)
                 , Html.Events.preventDefaultOn "contextmenu" contextMenuDecoder
                 ]
                 [ Html.div
@@ -1712,8 +1797,8 @@ viewAddChildButton model path =
         Html.span []
             [ Html.select
                 [ Html.Events.on "change"
-                    (Decode.at [ "target", "value" ] Decode.string
-                        |> Decode.map
+                    (Json.Decode.at [ "target", "value" ] Json.Decode.string
+                        |> Json.Decode.map
                             (\v ->
                                 case v of
                                     "rect" ->
@@ -2407,6 +2492,7 @@ subscriptions model =
                 Sub.batch
                     [ onDisconnectSuccessful (\() -> DisconnectSuccessful)
                     , onRootNodeAck (\() -> MsgConnected RootNodeAcked)
+                    , previewDragSubscriptions modelConnected.previewDrag
                     , case modelConnected.rootNode of
                         RootSynced _ ->
                             Sub.none
@@ -2423,8 +2509,8 @@ subscriptions model =
                                 (\_ -> MsgConnected ThrottleFrame)
                     ]
 
-            LocalConnected _ ->
-                Sub.none
+            LocalConnected modelConnected ->
+                previewDragSubscriptions modelConnected.previewDrag
         ]
 
 

@@ -10,7 +10,26 @@ import Test exposing (Test)
 suite : Test
 suite =
     Test.describe "BoundingBox"
-        [ Test.test "union is computed from extents (regression)" <|
+        [ Test.describe "contains"
+            [ Test.describe "unit tests"
+                (let
+                    testCases =
+                        [ ( "interior point", ( ( 5, 6 ), { x = 0, y = 0, w = 10, h = 10 } ), True )
+                        , ( "min corner inclusive", ( ( 0, 0 ), { x = 0, y = 0, w = 10, h = 10 } ), True )
+                        , ( "right/bottom edge exclusive", ( ( 10, 10 ), { x = 0, y = 0, w = 10, h = 10 } ), False )
+                        , ( "non-positive size is false", ( ( 0, 0 ), { x = 0, y = 0, w = 0, h = 10 } ), False )
+                        ]
+
+                    toTest ( description, ( ( x, y ), bbox ), expected ) =
+                        Test.test description <|
+                            \_ ->
+                                BoundingBox.contains x y bbox
+                                    |> Expect.equal expected
+                 in
+                 List.map toTest testCases
+                )
+            ]
+        , Test.test "union is computed from extents (regression)" <|
             \_ ->
                 let
                     a : BoundingBox
