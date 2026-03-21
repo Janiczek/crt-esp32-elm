@@ -805,7 +805,13 @@ updateConnected_ cfg msgConnected modelConnected =
                 , previewDrag = Nothing
                 , previewIgnoreClick = False
               }
-            , Cmd.none
+            , case path of
+                Just _ ->
+                    Browser.Dom.focus previewSurfaceDomId
+                        |> Task.attempt (\_ -> PreviewFocusAttempted)
+
+                Nothing ->
+                    Cmd.none
             )
 
         PreviewClicked x y ->
@@ -1935,7 +1941,12 @@ viewTreeNode model path node =
 
         rowAttrs : List (Html.Attribute Msg)
         rowAttrs =
-            [ Html.Attributes.style "padding" "0.15rem 0.35rem"
+            [ Html.Attributes.style "display" "flex"
+            , Html.Attributes.style "flex-direction" "row"
+            , Html.Attributes.style "align-items" "center"
+            , Html.Attributes.style "justify-content" "space-between"
+            , Html.Attributes.style "gap" "0.35rem"
+            , Html.Attributes.style "padding" "0.15rem 0.35rem"
             , Html.Attributes.style "cursor" "pointer"
             , Html.Attributes.style "border-radius" "2px"
             , Html.Attributes.style "margin-bottom" "1px"
@@ -1967,7 +1978,10 @@ viewTreeNode model path node =
         addRemove : Html Msg
         addRemove =
             Html.span
-                [ Html.Attributes.style "margin-left" "0.5rem"
+                [ Html.Attributes.style "flex-shrink" "0"
+                , Html.Attributes.style "display" "inline-flex"
+                , Html.Attributes.style "align-items" "center"
+                , Html.Attributes.style "gap" "0.25rem"
                 , Html.Attributes.style "font-size" "0.6875rem"
                 ]
                 (if List.isEmpty path then
@@ -1975,9 +1989,9 @@ viewTreeNode model path node =
 
                  else
                     [ viewAddChildButton model path
-                    , Html.text " "
                     , Html.button
-                        [ Html.Events.onClick (MsgConnected (RemoveNode path))
+                        [ Html.Events.stopPropagationOn "click"
+                            (Json.Decode.succeed ( MsgConnected (RemoveNode path), True ))
                         , Html.Attributes.style "padding" "0 0.25rem"
                         ]
                         [ Html.text "Remove" ]
@@ -1986,7 +2000,14 @@ viewTreeNode model path node =
     in
     Html.div []
         [ Html.div rowAttrs
-            [ Html.text (Node.displayLabel node)
+            [ Html.span
+                [ Html.Attributes.style "flex" "1 1 auto"
+                , Html.Attributes.style "min-width" "0"
+                , Html.Attributes.style "overflow" "hidden"
+                , Html.Attributes.style "text-overflow" "ellipsis"
+                , Html.Attributes.style "white-space" "nowrap"
+                ]
+                [ Html.text (Node.displayLabel node) ]
             , addRemove
             ]
         , childrenView
@@ -2080,6 +2101,7 @@ viewAddChildButton model path =
                 , Html.Attributes.id ("add-child-select-" ++ String.join "-" (List.map String.fromInt path))
                 , Html.Attributes.disabled (limitWarning /= Nothing)
                 , Html.Attributes.value ""
+                , Html.Attributes.placeholder "Add…"
                 ]
                 [ Html.option
                     [ Html.Attributes.value ""
