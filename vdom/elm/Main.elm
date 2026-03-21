@@ -1032,13 +1032,13 @@ viewNotConnected model =
         [ Html.Attributes.style "display" "flex"
         , Html.Attributes.style "flex-direction" "column"
         , Html.Attributes.style "height" "100vh"
-        , Html.Attributes.style "padding" "0.5rem"
+        , Html.Attributes.style "padding" "0.35rem"
         ]
         (List.concat
             [ [ Html.div
                     [ Html.Attributes.style "display" "flex"
                     , Html.Attributes.style "align-items" "center"
-                    , Html.Attributes.style "gap" "0.5rem"
+                    , Html.Attributes.style "gap" "0.4rem"
                     , Html.Attributes.style "margin-bottom" "0.5rem"
                     ]
                     [ Html.text "Not connected."
@@ -1191,15 +1191,18 @@ previewDragMoveDecoder =
 
 tryStartPreviewDrag : Int -> Int -> Float -> Float -> ModelConnected -> ModelConnected
 tryStartPreviewDrag videoX videoY clientX clientY modelConnected =
-    case modelConnected.selectedPath of
+    let
+        root =
+            desiredRoot modelConnected.rootNode
+
+        hits =
+            Node.hitPathsAtPixel modelConnected.esp32.fonts videoX videoY root
+    in
+    case List.head hits of
         Nothing ->
             modelConnected
 
         Just path ->
-            let
-                root =
-                    desiredRoot modelConnected.rootNode
-            in
             case Path.getNodeAtPath path root of
                 Nothing ->
                     modelConnected
@@ -1210,30 +1213,23 @@ tryStartPreviewDrag videoX videoY clientX clientY modelConnected =
                             modelConnected
 
                         _ ->
-                            let
-                                bbox =
-                                    node.bbox
-                            in
-                            if BoundingBox.contains videoX videoY bbox then
-                                case Node.topLeftXY node.type_ of
-                                    Nothing ->
-                                        modelConnected
+                            case Node.topLeftXY node.type_ of
+                                Nothing ->
+                                    modelConnected
 
-                                    Just startXY ->
-                                        { modelConnected
-                                            | previewMenu = Nothing
-                                            , previewDrag =
-                                                Just
-                                                    { path = path
-                                                    , key = node.key
-                                                    , startClient = ( clientX, clientY )
-                                                    , startNodeXY = startXY
-                                                    , moved = False
-                                                    }
-                                        }
-
-                            else
-                                modelConnected
+                                Just startXY ->
+                                    { modelConnected
+                                        | selectedPath = Just path
+                                        , previewMenu = Nothing
+                                        , previewDrag =
+                                            Just
+                                                { path = path
+                                                , key = node.key
+                                                , startClient = ( clientX, clientY )
+                                                , startNodeXY = startXY
+                                                , moved = False
+                                                }
+                                    }
 
 
 applyPreviewDragMove :
@@ -1440,8 +1436,38 @@ previewMenuView vc zoom root previewMenu =
         items
 
 
-viewPreviewColumn : ModelConnected -> Html Msg
-viewPreviewColumn model =
+viewPreviewHeader : ModelConnected -> Html Msg
+viewPreviewHeader model =
+    let
+        zoom =
+            model.previewZoom
+
+        zoomButton z =
+            Html.button
+                [ Html.Events.onClick (MsgConnected (SetPreviewZoom z))
+                , Html.Attributes.Extra.attributeIf (zoom == z)
+                    (Html.Attributes.style "background" "var(--selection)")
+                ]
+                [ Html.text (String.fromInt z ++ "x") ]
+    in
+    Html.div
+        [ Html.Attributes.style "flex" "0 0 auto"
+        , Html.Attributes.style "display" "flex"
+        , Html.Attributes.style "align-items" "center"
+        , Html.Attributes.style "gap" "0.4rem"
+        ]
+        [ Html.div
+            [ Html.Attributes.style "font-size" "0.8125rem"
+            ]
+            [ Html.text "Preview" ]
+        , zoomButton 1
+        , zoomButton 2
+        , zoomButton 3
+        ]
+
+
+viewPreviewSurface : ModelConnected -> Html Msg
+viewPreviewSurface model =
     let
         vc =
             model.videoConstants
@@ -1474,101 +1500,72 @@ viewPreviewColumn model =
                         , True
                         )
                     )
-
-        zoomButton z =
-            Html.button
-                [ Html.Events.onClick (MsgConnected (SetPreviewZoom z))
-                , Html.Attributes.Extra.attributeIf (zoom == z)
-                    (Html.Attributes.style "background" "var(--selection)")
-                ]
-                [ Html.text (String.fromInt z ++ "x") ]
     in
     Html.div
-        [ Html.Attributes.style "flex" "0 0 auto"
-        , Html.Attributes.style "display" "flex"
-        , Html.Attributes.style "flex-direction" "column"
-        , Html.Attributes.style "align-items" "flex-start"
+        [ Html.Attributes.style "width" (String.fromInt zoomedW ++ "px")
+        , Html.Attributes.style "height" (String.fromInt zoomedH ++ "px")
+        , Html.Attributes.style "flex-shrink" "0"
+        , Html.Attributes.style "position" "relative"
+        , Html.Attributes.style "overflow" "visible"
         ]
         [ Html.div
-            [ Html.Attributes.style "display" "flex"
-            , Html.Attributes.style "align-items" "center"
-            , Html.Attributes.style "gap" "0.5rem"
-            , Html.Attributes.style "margin-bottom" "0.25rem"
-            ]
-            [ Html.div
-                [ Html.Attributes.style "font-size" "0.875rem"
-                ]
-                [ Html.text "Preview" ]
-            , zoomButton 1
-            , zoomButton 2
-            , zoomButton 3
-            ]
-        , Html.div
-            [ Html.Attributes.style "width" (String.fromInt zoomedW ++ "px")
+            [ Html.Attributes.id "preview-surface"
+            , Html.Attributes.style "width" (String.fromInt zoomedW ++ "px")
             , Html.Attributes.style "height" (String.fromInt zoomedH ++ "px")
-            , Html.Attributes.style "flex-shrink" "0"
-            , Html.Attributes.style "position" "relative"
-            , Html.Attributes.style "overflow" "visible"
+            , Html.Events.on "click" clickDecoder
+            , Html.Events.on "mousedown" (previewDragMouseDownDecoder vc zoom)
+            , Html.Events.preventDefaultOn "contextmenu" contextMenuDecoder
             ]
             [ Html.div
-                [ Html.Attributes.id "preview-surface"
-                , Html.Attributes.style "width" (String.fromInt zoomedW ++ "px")
-                , Html.Attributes.style "height" (String.fromInt zoomedH ++ "px")
-                , Html.Events.on "click" clickDecoder
-                , Html.Events.on "mousedown" (previewDragMouseDownDecoder vc zoom)
-                , Html.Events.preventDefaultOn "contextmenu" contextMenuDecoder
+                [ Html.Attributes.style "width" (String.fromInt vc.usableWidth ++ "px")
+                , Html.Attributes.style "height" (String.fromInt vc.usableHeight ++ "px")
+                , Html.Attributes.style "transform" ("scale(" ++ String.fromInt zoom ++ ")")
+                , Html.Attributes.style "transform-origin" "top left"
+                , Html.Attributes.style "background" "black"
+                , Html.Attributes.style "overflow" "hidden"
+                , Html.Attributes.style "image-rendering" "pixelated"
+                , Html.Attributes.style "image-rendering" "crisp-edges"
+                , Html.Attributes.style "pointer-events" "none"
                 ]
-                [ Html.div
-                    [ Html.Attributes.style "width" (String.fromInt vc.usableWidth ++ "px")
-                    , Html.Attributes.style "height" (String.fromInt vc.usableHeight ++ "px")
-                    , Html.Attributes.style "transform" ("scale(" ++ String.fromInt zoom ++ ")")
-                    , Html.Attributes.style "transform-origin" "top left"
-                    , Html.Attributes.style "background" "black"
-                    , Html.Attributes.style "overflow" "hidden"
-                    , Html.Attributes.style "image-rendering" "pixelated"
-                    , Html.Attributes.style "image-rendering" "crisp-edges"
-                    , Html.Attributes.style "pointer-events" "none"
+                [ Svg.svg
+                    [ Svg.Attributes.width (String.fromInt vc.usableWidth)
+                    , Svg.Attributes.height (String.fromInt vc.usableHeight)
+                    , Svg.Attributes.viewBox
+                        (String.fromInt vc.xMin
+                            ++ " "
+                            ++ String.fromInt vc.yMin
+                            ++ " "
+                            ++ String.fromInt vc.usableWidth
+                            ++ " "
+                            ++ String.fromInt vc.usableHeight
+                        )
+                    , Svg.Attributes.style "display:block;pointer-events:none"
                     ]
-                    [ Svg.svg
-                        [ Svg.Attributes.width (String.fromInt vc.usableWidth)
-                        , Svg.Attributes.height (String.fromInt vc.usableHeight)
-                        , Svg.Attributes.viewBox
-                            (String.fromInt vc.xMin
-                                ++ " "
-                                ++ String.fromInt vc.yMin
-                                ++ " "
-                                ++ String.fromInt vc.usableWidth
-                                ++ " "
-                                ++ String.fromInt vc.usableHeight
-                            )
-                        , Svg.Attributes.style "display:block;pointer-events:none"
-                        ]
-                        (renderNodeToSvg model.esp32.fonts model.selectedPath [] root)
-                    ]
+                    (renderNodeToSvg model.esp32.fonts model.selectedPath [] root)
                 ]
-            , selectionBorderView vc zoom selectedNode
-            , case model.previewMenu of
-                Just previewMenu ->
-                    previewMenuView vc zoom root previewMenu
-
-                Nothing ->
-                    Html.text ""
             ]
+        , selectionBorderView vc zoom selectedNode
+        , case model.previewMenu of
+            Just previewMenu ->
+                previewMenuView vc zoom root previewMenu
+
+            Nothing ->
+                Html.text ""
         ]
 
 
 viewSidebarColumn : ModelConnected -> Html Msg
 viewSidebarColumn model =
     Html.div
-        [ Html.Attributes.style "flex" "0 0 350px"
-        , Html.Attributes.style "width" "350px"
-        , Html.Attributes.style "min-width" "350px"
-        , Html.Attributes.style "max-width" "350px"
+        [ Html.Attributes.style "flex" "0 0 260px"
+        , Html.Attributes.style "width" "260px"
+        , Html.Attributes.style "min-width" "260px"
+        , Html.Attributes.style "max-width" "260px"
         , Html.Attributes.style "display" "flex"
         , Html.Attributes.style "flex-direction" "column"
         , Html.Attributes.style "min-height" "0"
-        , Html.Attributes.style "overflow" "auto"
-        , Html.Attributes.style "gap" "0.5rem"
+        , Html.Attributes.style "overflow" "hidden"
+        , Html.Attributes.style "gap" "0.4rem"
         ]
         [ viewTreeColumn model
         , viewDetailsColumn model
@@ -1598,14 +1595,13 @@ viewRootNodeJsonColumn model =
                     Html.div
                         [ Html.Attributes.style "margin-top" "0.35rem"
                         , Html.Attributes.style "color" "#b91c1c"
-                        , Html.Attributes.style "font-size" "0.8rem"
+                        , Html.Attributes.style "font-size" "0.6875rem"
                         , Html.Attributes.style "white-space" "pre-wrap"
                         ]
                         [ Html.text err ]
     in
     Html.div
-        [ Html.Attributes.style "flex" "1 1 0"
-        , Html.Attributes.style "min-height" "0"
+        [ Html.Attributes.style "flex" "0 0 auto"
         , Html.Attributes.style "display" "flex"
         , Html.Attributes.style "flex-direction" "column"
         , Html.Attributes.style "background" "var(--surface-2)"
@@ -1614,35 +1610,35 @@ viewRootNodeJsonColumn model =
         , Html.Attributes.style "overflow" "hidden"
         ]
         [ Html.div
-            [ Html.Attributes.style "padding" "0.25rem 0.5rem"
-            , Html.Attributes.style "font-size" "0.875rem"
+            [ Html.Attributes.style "padding" "0.2rem 0.4rem"
+            , Html.Attributes.style "font-size" "0.8125rem"
             , Html.Attributes.style "font-weight" "600"
             , Html.Attributes.style "background" "var(--surface-3)"
             , Html.Attributes.style "border-bottom" "1px solid var(--border)"
             ]
             [ Html.text "Node JSON" ]
         , Html.div
-            [ Html.Attributes.style "flex" "1"
-            , Html.Attributes.style "min-height" "0"
-            , Html.Attributes.style "overflow" "auto"
-            , Html.Attributes.style "padding" "0.5rem"
+            [ Html.Attributes.style "padding" "0.35rem"
             ]
             [ Html.textarea
                 [ Html.Attributes.value model.rootNodeJsonText
                 , Html.Events.onInput (\t -> MsgConnected (SetRootNodeJsonText t))
                 , Html.Attributes.style "width" "100%"
+                , Html.Attributes.style "height" "10rem"
                 , Html.Attributes.style "min-height" "10rem"
+                , Html.Attributes.style "max-height" "10rem"
+                , Html.Attributes.style "resize" "none"
                 , Html.Attributes.style "box-sizing" "border-box"
                 , Html.Attributes.style "font-family" "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-                , Html.Attributes.style "font-size" "0.8rem"
+                , Html.Attributes.style "font-size" "0.6875rem"
                 , Html.Attributes.style "border" textareaBorder
                 , Html.Attributes.style "border-radius" "4px"
-                , Html.Attributes.style "padding" "0.5rem"
+                , Html.Attributes.style "padding" "0.35rem"
                 ]
                 []
             , Html.div
                 [ Html.Attributes.style "display" "flex"
-                , Html.Attributes.style "gap" "0.5rem"
+                , Html.Attributes.style "gap" "0.4rem"
                 , Html.Attributes.style "margin-top" "0.5rem"
                 ]
                 (if hasError then
@@ -1672,8 +1668,8 @@ viewTreeColumn model =
         , Html.Attributes.style "overflow" "hidden"
         ]
         [ Html.div
-            [ Html.Attributes.style "padding" "0.25rem 0.5rem"
-            , Html.Attributes.style "font-size" "0.875rem"
+            [ Html.Attributes.style "padding" "0.2rem 0.4rem"
+            , Html.Attributes.style "font-size" "0.8125rem"
             , Html.Attributes.style "font-weight" "600"
             , Html.Attributes.style "background" "var(--surface-3)"
             , Html.Attributes.style "border-bottom" "1px solid var(--border)"
@@ -1683,7 +1679,7 @@ viewTreeColumn model =
             [ Html.Attributes.style "flex" "1"
             , Html.Attributes.style "min-height" "0"
             , Html.Attributes.style "overflow" "auto"
-            , Html.Attributes.style "padding" "0.25rem"
+            , Html.Attributes.style "padding" "0.2rem"
             ]
             [ viewTreeNode model [] (desiredRoot model.rootNode)
             ]
@@ -1697,7 +1693,7 @@ viewTreeNode model path node =
             model.selectedPath == Just path
 
         rowAttrs =
-            [ Html.Attributes.style "padding" "0.2rem 0.4rem"
+            [ Html.Attributes.style "padding" "0.15rem 0.35rem"
             , Html.Attributes.style "cursor" "pointer"
             , Html.Attributes.style "border-radius" "2px"
             , Html.Attributes.style "margin-bottom" "1px"
@@ -1728,7 +1724,7 @@ viewTreeNode model path node =
         addRemove =
             Html.span
                 [ Html.Attributes.style "margin-left" "0.5rem"
-                , Html.Attributes.style "font-size" "0.75rem"
+                , Html.Attributes.style "font-size" "0.6875rem"
                 ]
                 (if List.isEmpty path then
                     [ viewAddChildButton model path ]
@@ -1872,8 +1868,8 @@ viewDetailsColumn model =
         , Html.Attributes.style "overflow" "hidden"
         ]
         [ Html.div
-            [ Html.Attributes.style "padding" "0.25rem 0.5rem"
-            , Html.Attributes.style "font-size" "0.875rem"
+            [ Html.Attributes.style "padding" "0.2rem 0.4rem"
+            , Html.Attributes.style "font-size" "0.8125rem"
             , Html.Attributes.style "font-weight" "600"
             , Html.Attributes.style "background" "var(--surface-3)"
             , Html.Attributes.style "border-bottom" "1px solid var(--border)"
@@ -1882,13 +1878,13 @@ viewDetailsColumn model =
         , Html.div
             [ Html.Attributes.style "flex" "1"
             , Html.Attributes.style "overflow" "auto"
-            , Html.Attributes.style "padding" "0.5rem"
+            , Html.Attributes.style "padding" "0.35rem"
             ]
             (case model.selectedPath of
                 Just path ->
                     case Path.getNodeAtPath path (desiredRoot model.rootNode) of
                         Just node ->
-                            viewNodeDetails model node path
+                            [ viewNodeDetails model node path ]
 
                         Nothing ->
                             [ Html.div [ Html.Attributes.style "color" "var(--muted)" ] [ Html.text "Select a node." ] ]
@@ -1899,20 +1895,76 @@ viewDetailsColumn model =
         ]
 
 
-viewNodeDetails : ModelConnected -> Node -> List Int -> List (Html Msg)
+detailsFieldGrid : List (Html Msg) -> Html Msg
+detailsFieldGrid rows =
+    Html.div
+        [ Html.Attributes.style "display" "grid"
+        , Html.Attributes.style "grid-template-columns" "max-content minmax(0, 1fr)"
+        , Html.Attributes.style "column-gap" "0.45rem"
+        , Html.Attributes.style "row-gap" "0.35rem"
+        , Html.Attributes.style "align-items" "center"
+        ]
+        rows
+
+
+detailsLabelCell : String -> Bool -> Html Msg
+detailsLabelCell labelText alignTop =
+    Html.div
+        ([ Html.Attributes.style "font-size" "0.6875rem"
+         , Html.Attributes.style "justify-self" "end"
+         , Html.Attributes.style "text-align" "end"
+         ]
+            ++ (if alignTop then
+                    [ Html.Attributes.style "align-self" "start"
+                    , Html.Attributes.style "padding-top" "0.3rem"
+                    ]
+
+                else
+                    [ Html.Attributes.style "align-self" "center" ]
+               )
+        )
+        [ Html.text labelText ]
+
+
+detailsControlCell : Bool -> Html Msg -> Html Msg
+detailsControlCell alignTop control =
+    Html.div
+        ([ Html.Attributes.style "min-width" "0"
+         , Html.Attributes.style "width" "100%"
+         ]
+            ++ (if alignTop then
+                    [ Html.Attributes.style "align-self" "start" ]
+
+                else
+                    [ Html.Attributes.style "align-self" "center" ]
+               )
+        )
+        [ control ]
+
+
+detailsGridRow : String -> Html Msg -> Html Msg
+detailsGridRow labelText control =
+    Html.div
+        [ Html.Attributes.style "display" "contents" ]
+        [ detailsLabelCell labelText False
+        , detailsControlCell False control
+        ]
+
+
+detailsGridRowTop : String -> Html Msg -> Html Msg
+detailsGridRowTop labelText control =
+    Html.div
+        [ Html.Attributes.style "display" "contents" ]
+        [ detailsLabelCell labelText True
+        , detailsControlCell True control
+        ]
+
+
+viewNodeDetails : ModelConnected -> Node -> List Int -> Html Msg
 viewNodeDetails model node path =
     let
-        fieldLabel s =
-            Html.div
-                [ Html.Attributes.style "font-size" "0.75rem"
-                , Html.Attributes.style "margin-top" "0.5rem"
-                , Html.Attributes.style "margin-bottom" "0.15rem"
-                ]
-                [ Html.text s ]
-
-        keyField =
-            [ fieldLabel "Key"
-            , Html.input
+        keyInput =
+            Html.input
                 [ Html.Attributes.value node.key
                 , Html.Events.onInput
                     (\k ->
@@ -1922,7 +1974,6 @@ viewNodeDetails model node path =
                 , Html.Attributes.style "box-sizing" "border-box"
                 ]
                 []
-            ]
 
         centerInUsableAreaButton : Int -> Int -> (Int -> Int -> Type) -> Html Msg
         centerInUsableAreaButton wantedX wantedY toType =
@@ -1951,170 +2002,144 @@ viewNodeDetails model node path =
         typeFields =
             case node.type_ of
                 Rect r ->
-                    [ fieldLabel "x"
-                    , intSliderInput model.videoConstants.xMin model.videoConstants.xMax path node.key (\x -> Rect { r | x = x }) r.x
-                    , fieldLabel "y"
-                    , intSliderInput model.videoConstants.yMin model.videoConstants.yMax path node.key (\y -> Rect { r | y = y }) r.y
-                    , fieldLabel "center"
-                    , centerInUsableAreaButtonForNode (\x y -> Rect { r | x = x, y = y })
-                    , fieldLabel "w"
-                    , intSliderInput 0 model.videoConstants.usableWidth path node.key (\w -> Rect { r | w = w }) r.w
-                    , fieldLabel "h"
-                    , intSliderInput 0 model.videoConstants.usableHeight path node.key (\h -> Rect { r | h = h }) r.h
-                    , fieldLabel "color"
-                    , colorInput path node.key (\color -> Rect { r | color = color }) r.color
+                    [ detailsGridRow "x" (intSliderInput model.videoConstants.xMin model.videoConstants.xMax path node.key (\x -> Rect { r | x = x }) r.x)
+                    , detailsGridRow "y" (intSliderInput model.videoConstants.yMin model.videoConstants.yMax path node.key (\y -> Rect { r | y = y }) r.y)
+                    , detailsGridRow "center" (centerInUsableAreaButtonForNode (\x y -> Rect { r | x = x, y = y }))
+                    , detailsGridRow "w" (intSliderInput 0 model.videoConstants.usableWidth path node.key (\w -> Rect { r | w = w }) r.w)
+                    , detailsGridRow "h" (intSliderInput 0 model.videoConstants.usableHeight path node.key (\h -> Rect { r | h = h }) r.h)
+                    , detailsGridRow "color" (colorInput path node.key (\color -> Rect { r | color = color }) r.color)
                     ]
 
                 RectFill r ->
-                    [ fieldLabel "x"
-                    , intSliderInput model.videoConstants.xMin model.videoConstants.xMax path node.key (\x -> RectFill { r | x = x }) r.x
-                    , fieldLabel "y"
-                    , intSliderInput model.videoConstants.yMin model.videoConstants.yMax path node.key (\y -> RectFill { r | y = y }) r.y
-                    , fieldLabel "center"
-                    , centerInUsableAreaButtonForNode (\x y -> RectFill { r | x = x, y = y })
-                    , fieldLabel "w"
-                    , intSliderInput 0 model.videoConstants.usableWidth path node.key (\w -> RectFill { r | w = w }) r.w
-                    , fieldLabel "h"
-                    , intSliderInput 0 model.videoConstants.usableHeight path node.key (\h -> RectFill { r | h = h }) r.h
-                    , fieldLabel "color"
-                    , colorInput path node.key (\color -> RectFill { r | color = color }) r.color
+                    [ detailsGridRow "x" (intSliderInput model.videoConstants.xMin model.videoConstants.xMax path node.key (\x -> RectFill { r | x = x }) r.x)
+                    , detailsGridRow "y" (intSliderInput model.videoConstants.yMin model.videoConstants.yMax path node.key (\y -> RectFill { r | y = y }) r.y)
+                    , detailsGridRow "center" (centerInUsableAreaButtonForNode (\x y -> RectFill { r | x = x, y = y }))
+                    , detailsGridRow "w" (intSliderInput 0 model.videoConstants.usableWidth path node.key (\w -> RectFill { r | w = w }) r.w)
+                    , detailsGridRow "h" (intSliderInput 0 model.videoConstants.usableHeight path node.key (\h -> RectFill { r | h = h }) r.h)
+                    , detailsGridRow "color" (colorInput path node.key (\color -> RectFill { r | color = color }) r.color)
                     ]
 
                 XLine r ->
-                    [ fieldLabel "x"
-                    , intSliderInput model.videoConstants.xMin model.videoConstants.xMax path node.key (\x -> XLine { r | x = x }) r.x
-                    , fieldLabel "y"
-                    , intSliderInput model.videoConstants.yMin model.videoConstants.yMax path node.key (\y -> XLine { r | y = y }) r.y
-                    , fieldLabel "center"
-                    , centerInUsableAreaButtonForNode (\x y -> XLine { r | x = x, y = y })
-                    , fieldLabel "len"
-                    , intSliderInput 0 model.videoConstants.usableWidth path node.key (\len -> XLine { r | len = len }) r.len
-                    , fieldLabel "color"
-                    , colorInput path node.key (\color -> XLine { r | color = color }) r.color
+                    [ detailsGridRow "x" (intSliderInput model.videoConstants.xMin model.videoConstants.xMax path node.key (\x -> XLine { r | x = x }) r.x)
+                    , detailsGridRow "y" (intSliderInput model.videoConstants.yMin model.videoConstants.yMax path node.key (\y -> XLine { r | y = y }) r.y)
+                    , detailsGridRow "center" (centerInUsableAreaButtonForNode (\x y -> XLine { r | x = x, y = y }))
+                    , detailsGridRow "len" (intSliderInput 0 model.videoConstants.usableWidth path node.key (\len -> XLine { r | len = len }) r.len)
+                    , detailsGridRow "color" (colorInput path node.key (\color -> XLine { r | color = color }) r.color)
                     ]
 
                 YLine r ->
-                    [ fieldLabel "x"
-                    , intSliderInput model.videoConstants.xMin model.videoConstants.xMax path node.key (\x -> YLine { r | x = x }) r.x
-                    , fieldLabel "y"
-                    , intSliderInput model.videoConstants.yMin model.videoConstants.yMax path node.key (\y -> YLine { r | y = y }) r.y
-                    , fieldLabel "center"
-                    , centerInUsableAreaButtonForNode (\x y -> YLine { r | x = x, y = y })
-                    , fieldLabel "len"
-                    , intSliderInput 0 model.videoConstants.usableHeight path node.key (\len -> YLine { r | len = len }) r.len
-                    , fieldLabel "color"
-                    , colorInput path node.key (\color -> YLine { r | color = color }) r.color
+                    [ detailsGridRow "x" (intSliderInput model.videoConstants.xMin model.videoConstants.xMax path node.key (\x -> YLine { r | x = x }) r.x)
+                    , detailsGridRow "y" (intSliderInput model.videoConstants.yMin model.videoConstants.yMax path node.key (\y -> YLine { r | y = y }) r.y)
+                    , detailsGridRow "center" (centerInUsableAreaButtonForNode (\x y -> YLine { r | x = x, y = y }))
+                    , detailsGridRow "len" (intSliderInput 0 model.videoConstants.usableHeight path node.key (\len -> YLine { r | len = len }) r.len)
+                    , detailsGridRow "color" (colorInput path node.key (\color -> YLine { r | color = color }) r.color)
                     ]
 
                 Text r ->
-                    [ fieldLabel "x"
-                    , intSliderInput model.videoConstants.xMin model.videoConstants.xMax path node.key (\x -> Text { r | x = x }) r.x
-                    , fieldLabel "y"
-                    , intSliderInput model.videoConstants.yMin model.videoConstants.yMax path node.key (\y -> Text { r | y = y }) r.y
-                    , fieldLabel "center"
-                    , centerInUsableAreaButtonForNode (\x y -> Text { r | x = x, y = y })
-                    , fieldLabel "text"
-                    , Html.textarea
-                        [ Html.Attributes.value r.text
-                        , Html.Events.onInput (\t -> MsgConnected (UpdateNodeAtPath path node.key (Text { r | text = t })))
-                        , Html.Attributes.rows 4
-                        , Html.Attributes.style "width" "100%"
-                        , Html.Attributes.style "box-sizing" "border-box"
-                        ]
-                        []
-                    , fieldLabel "fontIndex"
-                    , Html.select
-                        [ Html.Events.onInput
-                            (\s ->
-                                String.toInt s
-                                    |> Maybe.map (\fontIndex -> MsgConnected (UpdateNodeAtPath path node.key (Text { r | fontIndex = fontIndex })))
-                                    |> Maybe.withDefault (MsgConnected (SelectNode (Just path)))
-                            )
-                        , Html.Attributes.style "width" "100%"
-                        , Html.Attributes.style "box-sizing" "border-box"
-                        ]
-                        (model.esp32.fonts
-                            |> List.indexedMap
-                                (\i font ->
-                                    Html.option
-                                        [ Html.Attributes.value (String.fromInt i)
-                                        , Html.Attributes.Extra.attributeIf (i == r.fontIndex) (Html.Attributes.attribute "selected" "")
-                                        ]
-                                        [ Html.text (String.fromInt i ++ ": " ++ font.name) ]
-                                )
+                    [ detailsGridRow "x" (intSliderInput model.videoConstants.xMin model.videoConstants.xMax path node.key (\x -> Text { r | x = x }) r.x)
+                    , detailsGridRow "y" (intSliderInput model.videoConstants.yMin model.videoConstants.yMax path node.key (\y -> Text { r | y = y }) r.y)
+                    , detailsGridRow "center" (centerInUsableAreaButtonForNode (\x y -> Text { r | x = x, y = y }))
+                    , detailsGridRowTop "text"
+                        (Html.textarea
+                            [ Html.Attributes.value r.text
+                            , Html.Events.onInput (\t -> MsgConnected (UpdateNodeAtPath path node.key (Text { r | text = t })))
+                            , Html.Attributes.rows 4
+                            , Html.Attributes.style "width" "100%"
+                            , Html.Attributes.style "box-sizing" "border-box"
+                            ]
+                            []
                         )
-                    , fieldLabel "color"
-                    , colorInput path node.key (\color -> Text { r | color = color }) r.color
+                    , detailsGridRow "fontIndex"
+                        (Html.select
+                            [ Html.Events.onInput
+                                (\s ->
+                                    String.toInt s
+                                        |> Maybe.map (\fontIndex -> MsgConnected (UpdateNodeAtPath path node.key (Text { r | fontIndex = fontIndex })))
+                                        |> Maybe.withDefault (MsgConnected (SelectNode (Just path)))
+                                )
+                            , Html.Attributes.style "width" "100%"
+                            , Html.Attributes.style "box-sizing" "border-box"
+                            ]
+                            (model.esp32.fonts
+                                |> List.indexedMap
+                                    (\i font ->
+                                        Html.option
+                                            [ Html.Attributes.value (String.fromInt i)
+                                            , Html.Attributes.Extra.attributeIf (i == r.fontIndex) (Html.Attributes.attribute "selected" "")
+                                            ]
+                                            [ Html.text (String.fromInt i ++ ": " ++ font.name) ]
+                                    )
+                            )
+                        )
+                    , detailsGridRow "color" (colorInput path node.key (\color -> Text { r | color = color }) r.color)
                     ]
 
                 Bitmap r ->
-                    [ fieldLabel "x"
-                    , intSliderInput model.videoConstants.xMin model.videoConstants.xMax path node.key (\x -> Bitmap { r | x = x }) r.x
-                    , fieldLabel "y"
-                    , intSliderInput model.videoConstants.yMin model.videoConstants.yMax path node.key (\y -> Bitmap { r | y = y }) r.y
-                    , fieldLabel "center"
-                    , centerInUsableAreaButtonForNode (\x y -> Bitmap { r | x = x, y = y })
-                    , fieldLabel "preset"
-                    , Html.select
-                        [ Html.Events.onInput
-                            (\s ->
-                                String.toInt s
-                                    |> Maybe.andThen (\i -> List.Extra.getAt i allBitmaps)
-                                    |> Maybe.map
-                                        (\e ->
-                                            MsgConnected
-                                                (UpdateNodeAtPath path
-                                                    node.key
-                                                    (Bitmap
-                                                        { r
-                                                            | w = e.w
-                                                            , h = e.h
-                                                            , bitDepth = e.bitDepth
-                                                            , data = e.data
-                                                        }
+                    [ detailsGridRow "x" (intSliderInput model.videoConstants.xMin model.videoConstants.xMax path node.key (\x -> Bitmap { r | x = x }) r.x)
+                    , detailsGridRow "y" (intSliderInput model.videoConstants.yMin model.videoConstants.yMax path node.key (\y -> Bitmap { r | y = y }) r.y)
+                    , detailsGridRow "center" (centerInUsableAreaButtonForNode (\x y -> Bitmap { r | x = x, y = y }))
+                    , detailsGridRow "preset"
+                        (Html.select
+                            [ Html.Events.onInput
+                                (\s ->
+                                    String.toInt s
+                                        |> Maybe.andThen (\i -> List.Extra.getAt i allBitmaps)
+                                        |> Maybe.map
+                                            (\e ->
+                                                MsgConnected
+                                                    (UpdateNodeAtPath path
+                                                        node.key
+                                                        (Bitmap
+                                                            { r
+                                                                | w = e.w
+                                                                , h = e.h
+                                                                , bitDepth = e.bitDepth
+                                                                , data = e.data
+                                                            }
+                                                        )
                                                     )
-                                                )
-                                        )
-                                    |> Maybe.withDefault (MsgConnected (SelectNode (Just path)))
-                            )
-                        , Html.Attributes.style "width" "100%"
-                        , Html.Attributes.style "box-sizing" "border-box"
-                        ]
-                        (allBitmaps
-                            |> List.indexedMap
-                                (\i e ->
-                                    Html.option
-                                        [ Html.Attributes.value (String.fromInt i)
-                                        , Html.Attributes.Extra.attributeIf (embeddedBitmapMatchIndex r == Just i) (Html.Attributes.attribute "selected" "")
-                                        ]
-                                        [ Html.text e.label ]
+                                            )
+                                        |> Maybe.withDefault (MsgConnected (SelectNode (Just path)))
                                 )
-                        )
-                    , fieldLabel "data"
-                    , Html.div
-                        [ Html.Attributes.style "font-size" "0.8rem"
-                        , Html.Attributes.style "color" "var(--muted)"
-                        , Html.Attributes.style "white-space" "pre-wrap"
-                        ]
-                        [ Html.text
-                            ("w: "
-                                ++ String.fromInt r.w
-                                ++ "\nh: "
-                                ++ String.fromInt r.h
-                                ++ "\nbitDepth: "
-                                ++ String.fromInt (Bitmap.bitDepthToInt r.bitDepth)
-                                ++ "\nStored bytes: "
-                                ++ String.fromInt (List.length r.data)
-                                ++ "\nPreset replaces w, h, bitDepth, and packed data (one-way). JSON pane can still overwrite data."
+                            , Html.Attributes.style "width" "100%"
+                            , Html.Attributes.style "box-sizing" "border-box"
+                            ]
+                            (allBitmaps
+                                |> List.indexedMap
+                                    (\i e ->
+                                        Html.option
+                                            [ Html.Attributes.value (String.fromInt i)
+                                            , Html.Attributes.Extra.attributeIf (embeddedBitmapMatchIndex r == Just i) (Html.Attributes.attribute "selected" "")
+                                            ]
+                                            [ Html.text e.label ]
+                                    )
                             )
-                        ]
+                        )
+                    , detailsGridRowTop "data"
+                        (Html.div
+                            [ Html.Attributes.style "font-size" "0.6875rem"
+                            , Html.Attributes.style "color" "var(--muted)"
+                            , Html.Attributes.style "white-space" "pre-wrap"
+                            ]
+                            [ Html.text
+                                ("w: "
+                                    ++ String.fromInt r.w
+                                    ++ "\nh: "
+                                    ++ String.fromInt r.h
+                                    ++ "\nbitDepth: "
+                                    ++ String.fromInt (Bitmap.bitDepthToInt r.bitDepth)
+                                    ++ "\nStored bytes: "
+                                    ++ String.fromInt (List.length r.data)
+                                    ++ "\nPreset replaces w, h, bitDepth, and packed data (one-way). JSON pane can still overwrite data."
+                                )
+                            ]
+                        )
                     ]
 
                 Node.Group _ ->
                     []
     in
-    (keyField ++ typeFields)
-        |> List.map (\e -> Html.div [] [ e ])
+    detailsFieldGrid (detailsGridRow "Key" keyInput :: typeFields)
 
 
 intSliderInput : Int -> Int -> List Int -> String -> (Int -> Type) -> Int -> Html Msg
@@ -2126,7 +2151,7 @@ intSliderInput min_ max_ path key toType current =
     Html.div
         [ Html.Attributes.style "display" "flex"
         , Html.Attributes.style "align-items" "center"
-        , Html.Attributes.style "gap" "0.5rem"
+        , Html.Attributes.style "gap" "0.4rem"
         ]
         [ Html.input
             [ Html.Attributes.type_ "range"
@@ -2148,7 +2173,7 @@ intSliderInput min_ max_ path key toType current =
             [ Html.Attributes.style "width" "3rem"
             , Html.Attributes.style "text-align" "right"
             , Html.Attributes.style "font-family" "ui-monospace, monospace"
-            , Html.Attributes.style "font-size" "0.875rem"
+            , Html.Attributes.style "font-size" "0.8125rem"
             ]
             [ Html.text (String.fromInt current_) ]
         ]
@@ -2174,7 +2199,7 @@ colorInput path key toType current =
     Html.div
         [ Html.Attributes.style "display" "flex"
         , Html.Attributes.style "align-items" "center"
-        , Html.Attributes.style "gap" "0.5rem"
+        , Html.Attributes.style "gap" "0.4rem"
         ]
         [ Html.input
             [ Html.Attributes.type_ "range"
@@ -2196,7 +2221,7 @@ colorInput path key toType current =
             [ Html.Attributes.style "width" "3rem"
             , Html.Attributes.style "text-align" "right"
             , Html.Attributes.style "font-family" "ui-monospace, monospace"
-            , Html.Attributes.style "font-size" "0.875rem"
+            , Html.Attributes.style "font-size" "0.8125rem"
             ]
             [ Html.text (String.fromInt current_) ]
         ]
@@ -2207,8 +2232,8 @@ viewConnected { isLocal } model =
     Html.div
         [ Html.Attributes.style "display" "flex"
         , Html.Attributes.style "height" "100vh"
-        , Html.Attributes.style "padding" "0.5rem"
-        , Html.Attributes.style "gap" "0.5rem"
+        , Html.Attributes.style "padding" "0.35rem"
+        , Html.Attributes.style "gap" "0.4rem"
         ]
         [ Html.div
             [ Html.Attributes.style "flex" "1 1 auto"
@@ -2219,27 +2244,39 @@ viewConnected { isLocal } model =
             ]
             [ Html.div
                 [ Html.Attributes.style "display" "flex"
+                , Html.Attributes.style "flex-wrap" "wrap"
+                , Html.Attributes.style "justify-content" "space-between"
                 , Html.Attributes.style "align-items" "center"
-                , Html.Attributes.style "gap" "0.5rem"
+                , Html.Attributes.style "gap" "0.4rem"
                 , Html.Attributes.style "margin-bottom" "0.5rem"
                 ]
-                [ Html.text "Connected."
-                , Html.button
-                    [ Html.Events.onClick DisconnectRequested ]
-                    [ Html.text "Disconnect" ]
-                , if isLocal then
-                    Html.text "Local-only (not connected to an ESP32)."
+                [ Html.div
+                    [ Html.Attributes.style "display" "flex"
+                    , Html.Attributes.style "flex" "1 1 auto"
+                    , Html.Attributes.style "align-items" "center"
+                    , Html.Attributes.style "gap" "0.4rem"
+                    , Html.Attributes.style "min-width" "0"
+                    ]
+                    [ Html.text "Connected."
+                    , Html.button
+                        [ Html.Events.onClick DisconnectRequested ]
+                        [ Html.text "Disconnect" ]
+                    , if isLocal then
+                        Html.text "Local-only (not connected to an ESP32)."
 
-                  else
-                    Html.text ""
-                , viewLastError model.lastError
+                      else
+                        Html.text ""
+                    , viewLastError model.lastError
+                    ]
+                , viewPreviewHeader model
                 ]
             , Html.div
                 [ Html.Attributes.style "flex" "1 1 auto"
                 , Html.Attributes.style "min-height" "0"
+                , Html.Attributes.style "min-width" "0"
                 , Html.Attributes.style "overflow" "auto"
                 ]
-                [ viewPreviewColumn model ]
+                [ viewPreviewSurface model ]
             ]
         , viewSidebarColumn model
         ]

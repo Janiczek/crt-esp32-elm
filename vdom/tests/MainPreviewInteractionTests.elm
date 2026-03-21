@@ -133,7 +133,7 @@ suite =
                     |> expectSelected clickCase.scenario.textHash
         , Test.fuzz
             (scenarioClickFuzzer rectScenario)
-            "click on node A then mousedown on node B doesn't change selection mousedown without subsequent click does not change selection"
+            "click on node A then mousedown on node B selects B for drag"
           <|
             \clickCase ->
                 start clickCase.zoom clickCase.esp32 clickCase.scenario.root
@@ -143,7 +143,7 @@ suite =
                         clickCase.zoom
                         clickCase.scenario.mouseDownOtherX
                         clickCase.scenario.mouseDownOtherY
-                    |> expectSelected clickCase.scenario.topHash
+                    |> expectSelected clickCase.scenario.mouseDownTargetHash
         , Test.fuzz
             clickSequenceCaseFuzzer
             "after any click sequence, preview has at most one selected node"
@@ -429,6 +429,7 @@ type alias BboxSelectScenario =
     , topHash : String
     , mouseDownOtherX : Int
     , mouseDownOtherY : Int
+    , mouseDownTargetHash : String
     , previewEsp32 : ESP32
     }
 
@@ -478,6 +479,7 @@ rectScenario esp32 base =
     , topHash = String.fromInt leftRect.hash
     , mouseDownOtherX = rightRect.bbox.x + rightRect.bbox.w // 2
     , mouseDownOtherY = rightRect.bbox.y + rightRect.bbox.h // 2
+    , mouseDownTargetHash = String.fromInt rightRect.hash
     , previewEsp32 = esp32_
     }
 
