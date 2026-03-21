@@ -179,8 +179,6 @@ insertChildAtPath parentPath index newChild root =
             root
 
 
-
-
 toString : List Int -> String
 toString path =
     path

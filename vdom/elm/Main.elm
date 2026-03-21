@@ -1,4 +1,4 @@
-port module Main exposing (Flags, LoadingProgress, Model(..), ModelConnected, ModelNotConnected, Msg, PreviewContextMenu, PreviewDragState, RootNode(..), main, update, view)
+port module Main exposing (Flags, LoadingProgress, Model(..), ModelConnected, ModelNotConnected, Msg, PreviewContextMenu, PreviewDragState, RootNode(..), desiredRoot, main, update, view)
 
 {-| A web app to connect to and control an ESP32 over WiFi/WebSocket.
 
@@ -26,6 +26,7 @@ import Bitmap.Bd4_64_64_Duke
 import Bitmap.Bd8_256_16_TestStrip
 import Bitmap.Bd8_64_64_Duke
 import Browser exposing (Document)
+import Browser.Dom
 import Browser.Events
 import Bytes exposing (Bytes)
 import Bytes.Decode
@@ -48,6 +49,7 @@ import PreviewDrag
 import Set
 import Svg exposing (Svg)
 import Svg.Attributes
+import Task
 
 
 type alias Flags =
@@ -189,6 +191,8 @@ type MsgConnected
     | PreviewDragMove { clientX : Float, clientY : Float }
     | PreviewDragEnd
     | UpdateNodeAtPath (List Int) String Type
+    | UpdateNodeAtPathAndRefocusPreview (List Int) String Type
+    | PreviewFocusAttempted (Result Browser.Dom.Error ())
     | InsertChild (List Int) Int Type
     | RemoveNode (List Int)
     | SetPreviewZoom Int
@@ -199,6 +203,7 @@ type MsgConnected
     | SelectedUnknown String String
     | -- done for StopPropagation
       InteractedWithSelect
+    | NudgeSelectedNode Int Int
 
 
 port connect : () -> Cmd msg
@@ -476,6 +481,53 @@ type alias ConnectedUpdateConfig =
     { commitRoot : Node -> ModelConnected -> ModelConnected
     , syncToDevice : Bool
     }
+
+
+commitUpdateNodeAtPath : ConnectedUpdateConfig -> ModelConnected -> List Int -> String -> Type -> ModelConnected
+commitUpdateNodeAtPath cfg modelConnected path key type_ =
+    let
+        existing =
+            Path.getNodeAtPath path (desiredRoot modelConnected.rootNode)
+
+        newRoot =
+            case existing of
+                Just _ ->
+                    let
+                        newNode =
+                            case type_ of
+                                Group _ ->
+                                    case existing of
+                                        Just n ->
+                                            case n.type_ of
+                                                Node.Group { children } ->
+                                                    Node.group key children
+
+                                                _ ->
+                                                    Node.group key []
+
+                                        Nothing ->
+                                            Node.group key []
+
+                                _ ->
+                                    case existing of
+                                        Just _ ->
+                                            Node.fromKeyAndType modelConnected.esp32.fonts key type_
+
+                                        Nothing ->
+                                            desiredRoot modelConnected.rootNode
+                    in
+                    Path.setNodeAtPath path newNode (desiredRoot modelConnected.rootNode)
+
+                Nothing ->
+                    desiredRoot modelConnected.rootNode
+    in
+    { modelConnected | previewContextMenu = Nothing }
+        |> cfg.commitRoot newRoot
+
+
+previewSurfaceDomId : String
+previewSurfaceDomId =
+    "preview-surface"
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -800,46 +852,18 @@ updateConnected_ cfg msgConnected modelConnected =
             )
 
         UpdateNodeAtPath path key type_ ->
-            let
-                existing =
-                    Path.getNodeAtPath path (desiredRoot modelConnected.rootNode)
-
-                newRoot =
-                    case existing of
-                        Just _ ->
-                            let
-                                newNode =
-                                    case type_ of
-                                        Group _ ->
-                                            case existing of
-                                                Just n ->
-                                                    case n.type_ of
-                                                        Node.Group { children } ->
-                                                            Node.group key children
-
-                                                        _ ->
-                                                            Node.group key []
-
-                                                Nothing ->
-                                                    Node.group key []
-
-                                        _ ->
-                                            case existing of
-                                                Just _ ->
-                                                    Node.fromKeyAndType modelConnected.esp32.fonts key type_
-
-                                                Nothing ->
-                                                    desiredRoot modelConnected.rootNode
-                            in
-                            Path.setNodeAtPath path newNode (desiredRoot modelConnected.rootNode)
-
-                        Nothing ->
-                            desiredRoot modelConnected.rootNode
-            in
-            ( { modelConnected | previewContextMenu = Nothing }
-                |> cfg.commitRoot newRoot
+            ( commitUpdateNodeAtPath cfg modelConnected path key type_
             , Cmd.none
             )
+
+        UpdateNodeAtPathAndRefocusPreview path key type_ ->
+            ( commitUpdateNodeAtPath cfg modelConnected path key type_
+            , Browser.Dom.focus previewSurfaceDomId
+                |> Task.attempt PreviewFocusAttempted
+            )
+
+        PreviewFocusAttempted _ ->
+            ( modelConnected, Cmd.none )
 
         InsertChild parentPath index type_ ->
             let
@@ -995,6 +1019,49 @@ updateConnected_ cfg msgConnected modelConnected =
 
         InteractedWithSelect ->
             ( modelConnected, Cmd.none )
+
+        NudgeSelectedNode dx dy ->
+            case modelConnected.selectedPath of
+                Nothing ->
+                    ( modelConnected, Cmd.none )
+
+                Just path ->
+                    let
+                        root =
+                            desiredRoot modelConnected.rootNode
+                    in
+                    case Path.getNodeAtPath path root of
+                        Nothing ->
+                            ( modelConnected, Cmd.none )
+
+                        Just node ->
+                            let
+                                doNudge () =
+                                    nudgePositionedLeafAtPath cfg.commitRoot dx dy modelConnected path node root
+                            in
+                            ( case node.type_ of
+                                Group _ ->
+                                    modelConnected
+
+                                Rect _ ->
+                                    doNudge ()
+
+                                RectFill _ ->
+                                    doNudge ()
+
+                                XLine _ ->
+                                    doNudge ()
+
+                                YLine _ ->
+                                    doNudge ()
+
+                                Text _ ->
+                                    doNudge ()
+
+                                Bitmap _ ->
+                                    doNudge ()
+                            , Cmd.none
+                            )
 
         SelectedUnknown s v ->
             Debug.todo ("SelectedUnknown " ++ s ++ " " ++ v)
@@ -1213,6 +1280,39 @@ previewDragMoveDecoder =
         )
 
 
+previewArrowKeyDecoder : Json.Decode.Decoder ( Msg, Bool )
+previewArrowKeyDecoder =
+    Json.Decode.map2 Tuple.pair
+        (Json.Decode.field "key" Json.Decode.string)
+        (Json.Decode.field "shiftKey" Json.Decode.bool)
+        |> Json.Decode.andThen
+            (\( key, shift ) ->
+                let
+                    step =
+                        if shift then
+                            4
+
+                        else
+                            1
+                in
+                case key of
+                    "ArrowLeft" ->
+                        Json.Decode.succeed ( MsgConnected (NudgeSelectedNode -step 0), True )
+
+                    "ArrowRight" ->
+                        Json.Decode.succeed ( MsgConnected (NudgeSelectedNode step 0), True )
+
+                    "ArrowUp" ->
+                        Json.Decode.succeed ( MsgConnected (NudgeSelectedNode 0 -step), True )
+
+                    "ArrowDown" ->
+                        Json.Decode.succeed ( MsgConnected (NudgeSelectedNode 0 step), True )
+
+                    _ ->
+                        Json.Decode.fail "not an arrow nudge key"
+            )
+
+
 tryStartPreviewDrag : Int -> Int -> Float -> Float -> ModelConnected -> ModelConnected
 tryStartPreviewDrag videoX videoY clientX clientY modelConnected =
     let
@@ -1339,6 +1439,46 @@ applyPreviewDragEnd modelConnected =
                 | previewDrag = Nothing
                 , previewIgnoreClick = drag.moved
             }
+
+
+nudgePositionedLeafAtPath :
+    (Node -> ModelConnected -> ModelConnected)
+    -> Int
+    -> Int
+    -> ModelConnected
+    -> List Int
+    -> Node
+    -> Node
+    -> ModelConnected
+nudgePositionedLeafAtPath commitRoot dx dy modelConnected path node root =
+    case Node.topLeftXY node.type_ of
+        Nothing ->
+            modelConnected
+
+        Just ( x, y ) ->
+            let
+                ( newX, newY ) =
+                    PreviewDrag.clampedNodeNudge modelConnected.videoConstants dx dy ( x, y )
+            in
+            if newX == x && newY == y then
+                modelConnected
+
+            else
+                let
+                    newType =
+                        Node.typeWithNewXY newX newY node.type_
+
+                    newNode =
+                        Node.fromKeyAndType modelConnected.esp32.fonts node.key newType
+
+                    newRoot =
+                        Path.setNodeAtPath path newNode root
+                in
+                { modelConnected
+                    | previewContextMenu = Nothing
+                    , previewDrag = Nothing
+                }
+                    |> commitRoot newRoot
 
 
 previewDragSubscriptions : Maybe PreviewDragState -> Sub Msg
@@ -1534,12 +1674,15 @@ viewPreviewSurface model =
         , Html.Attributes.style "overflow" "visible"
         ]
         [ Html.div
-            [ Html.Attributes.id "preview-surface"
+            [ Html.Attributes.id previewSurfaceDomId
+            , Html.Attributes.tabindex 0
+            , Html.Attributes.style "outline" "none"
             , Html.Attributes.style "width" (String.fromInt zoomedW ++ "px")
             , Html.Attributes.style "height" (String.fromInt zoomedH ++ "px")
             , Html.Events.on "click" clickDecoder
             , Html.Events.on "mousedown" (previewDragMouseDownDecoder vc zoom)
             , Html.Events.preventDefaultOn "contextmenu" contextMenuDecoder
+            , Html.Events.preventDefaultOn "keydown" previewArrowKeyDecoder
             ]
             [ Html.div
                 [ Html.Attributes.style "width" (String.fromInt vc.usableWidth ++ "px")
@@ -2012,7 +2155,7 @@ viewNodeDetails model node path =
             Html.button
                 [ Html.Events.onClick
                     (MsgConnected
-                        (UpdateNodeAtPath path
+                        (UpdateNodeAtPathAndRefocusPreview path
                             node.key
                             (toType
                                 (max model.videoConstants.xMin wantedX)

@@ -92,7 +92,7 @@ suite =
             \() ->
                 let
                     _ =
-                        PreviewDrag.clampedNodeXYFromClientDrag
+                        ( PreviewDrag.clampedNodeXYFromClientDrag, PreviewDrag.clampedNodeNudge )
                 in
                 Expect.pass
         ]

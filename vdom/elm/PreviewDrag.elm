@@ -1,6 +1,16 @@
-module PreviewDrag exposing (clampedNodeXYFromClientDrag)
+module PreviewDrag exposing (clampedNodeNudge, clampedNodeXYFromClientDrag)
 
 import ESP32 exposing (VideoConstants)
+
+
+{-| Nudge node `(x, y)` by `(dx, dy)` in video pixels, clamped like
+[`clampedNodeXYFromClientDrag`](#clampedNodeXYFromClientDrag).
+-}
+clampedNodeNudge : VideoConstants -> Int -> Int -> ( Int, Int ) -> ( Int, Int )
+clampedNodeNudge vc dx dy ( x, y ) =
+    ( clamp vc.xMin vc.xMax (x + dx)
+    , clamp vc.yMin vc.yMax (y + dy)
+    )
 
 
 {-| Map a client-space drag (from `mousedown` / `mousemove`) into new node `(x, y)`

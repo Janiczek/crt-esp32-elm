@@ -35,7 +35,7 @@ suite =
     Test.describe "PreviewDrag.clampedNodeXYFromClientDrag"
         [ Test.describe "unit tests"
             (let
-                testCases : List ( String, ( Int, ( ( Float,Float ), ( Float,Float ), ( Int, Int ) ) ), ( Int, Int ) )
+                testCases : List ( String, ( Int, ( ( Float, Float ), ( Float, Float ), ( Int, Int ) ) ), ( Int, Int ) )
                 testCases =
                     [ ( "zero client delta keeps position"
                       , ( 1, ( ( 10, 20 ), ( 10, 20 ), ( 15, 25 ) ) )
@@ -71,7 +71,7 @@ suite =
                       )
                     ]
 
-                toTest : ( String, ( Int, ( ( Float,Float ), ( Float,Float ), ( Int, Int ) ) ), ( Int, Int ) ) -> Test
+                toTest : ( String, ( Int, ( ( Float, Float ), ( Float, Float ), ( Int, Int ) ) ), ( Int, Int ) ) -> Test
                 toTest ( desc, ( zoom, ( clientStart, clientCurrent, pos ) ), expected ) =
                     Test.test desc <|
                         \() ->

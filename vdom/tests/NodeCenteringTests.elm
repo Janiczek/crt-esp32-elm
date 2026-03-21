@@ -2,14 +2,13 @@ module NodeCenteringTests exposing (suite)
 
 import Bitmap exposing (BitDepth(..))
 import Color
-import ESP32
+import ESP32 exposing (VideoConstants)
 import Expect exposing (Expectation)
 import Font.Fallback
 import Fuzz
 import Fuzzers
 import Node exposing (Node)
 import Test exposing (Test)
-import ESP32 exposing (VideoConstants)
 
 
 suite : Test

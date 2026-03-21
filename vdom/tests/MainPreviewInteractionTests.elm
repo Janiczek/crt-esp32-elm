@@ -12,6 +12,7 @@ import Html.Attributes
 import Json.Encode as Encode
 import Main
 import Node exposing (Node, Type(..))
+import Path
 import ProgramTest
 import Test exposing (Test)
 import Test.Distribution as Distribution
@@ -270,6 +271,249 @@ suite =
                     |> expectSelected
                         -- hashes do contain keys, so this says we've selected rect-2!
                         (String.fromInt secondRect.hash)
+        , Test.test "preview surface: arrow keys nudge selected leaf position by 1 video pixel" <|
+            \() ->
+                let
+                    esp32 : ESP32
+                    esp32 =
+                        { videoWidth = 20
+                        , videoHeight = 20
+                        , crtPaddingLeft = 0
+                        , crtPaddingRight = 0
+                        , crtPaddingTop = 0
+                        , crtPaddingBottom = 0
+                        , maxTotalNodes = 64
+                        , nodeGroupMaxChildren = 8
+                        , tileSize = 8
+                        , fonts = []
+                        }
+
+                    vc : VideoConstants
+                    vc =
+                        ESP32.videoConstants esp32
+
+                    childRect : Node
+                    childRect =
+                        Node.rect "r"
+                            { x = vc.xMin + 5
+                            , y = vc.yMin + 5
+                            , w = 4
+                            , h = 4
+                            , color = Color.white
+                            }
+
+                    root : Node
+                    root =
+                        Node.group "root" [ childRect ]
+
+                    clickX : Int
+                    clickX =
+                        vc.xMin + 6
+
+                    clickY : Int
+                    clickY =
+                        vc.yMin + 6
+                in
+                start 1 esp32 root
+                    |> leftClick esp32 1 clickX clickY
+                    |> previewKeyDown "ArrowRight" { shift = False }
+                    |> previewKeyDown "ArrowDown" { shift = False }
+                    |> ProgramTest.expectModel
+                        (\model ->
+                            case connectedDesiredRoot model of
+                                Nothing ->
+                                    Expect.fail "expected Connected model"
+
+                                Just desiredRootNode ->
+                                    case Path.getNodeAtPath [ 0 ] desiredRootNode of
+                                        Nothing ->
+                                            Expect.fail "expected child at path [0]"
+
+                                        Just n ->
+                                            case n.type_ of
+                                                Rect r ->
+                                                    ( r.x, r.y )
+                                                        |> Expect.equal ( vc.xMin + 6, vc.yMin + 6 )
+
+                                                _ ->
+                                                    Expect.fail "expected Rect"
+                        )
+        , Test.test "preview surface: arrow key nudge clamps at video bounds" <|
+            \() ->
+                let
+                    esp32 : ESP32
+                    esp32 =
+                        { videoWidth = 20
+                        , videoHeight = 20
+                        , crtPaddingLeft = 0
+                        , crtPaddingRight = 0
+                        , crtPaddingTop = 0
+                        , crtPaddingBottom = 0
+                        , maxTotalNodes = 64
+                        , nodeGroupMaxChildren = 8
+                        , tileSize = 8
+                        , fonts = []
+                        }
+
+                    vc : VideoConstants
+                    vc =
+                        ESP32.videoConstants esp32
+
+                    childRect : Node
+                    childRect =
+                        Node.rect "r"
+                            { x = vc.xMax
+                            , y = vc.yMin + 8
+                            , w = 1
+                            , h = 1
+                            , color = Color.white
+                            }
+
+                    root : Node
+                    root =
+                        Node.group "root" [ childRect ]
+                in
+                start 1 esp32 root
+                    |> leftClick esp32 1 vc.xMax (vc.yMin + 8)
+                    |> previewKeyDown "ArrowRight" { shift = False }
+                    |> ProgramTest.expectModel
+                        (\model ->
+                            case connectedDesiredRoot model of
+                                Nothing ->
+                                    Expect.fail "expected Connected model"
+
+                                Just desiredRootNode ->
+                                    case Path.getNodeAtPath [ 0 ] desiredRootNode of
+                                        Nothing ->
+                                            Expect.fail "expected child at path [0]"
+
+                                        Just n ->
+                                            case n.type_ of
+                                                Rect r ->
+                                                    ( r.x, r.y )
+                                                        |> Expect.equal ( vc.xMax, vc.yMin + 8 )
+
+                                                _ ->
+                                                    Expect.fail "expected Rect"
+                        )
+        , Test.test "preview surface: Shift+arrow keys nudge selected leaf by 4 video pixels" <|
+            \() ->
+                let
+                    esp32 : ESP32
+                    esp32 =
+                        { videoWidth = 20
+                        , videoHeight = 20
+                        , crtPaddingLeft = 0
+                        , crtPaddingRight = 0
+                        , crtPaddingTop = 0
+                        , crtPaddingBottom = 0
+                        , maxTotalNodes = 64
+                        , nodeGroupMaxChildren = 8
+                        , tileSize = 8
+                        , fonts = []
+                        }
+
+                    vc : VideoConstants
+                    vc =
+                        ESP32.videoConstants esp32
+
+                    childRect : Node
+                    childRect =
+                        Node.rect "r"
+                            { x = vc.xMin + 5
+                            , y = vc.yMin + 5
+                            , w = 4
+                            , h = 4
+                            , color = Color.white
+                            }
+
+                    root : Node
+                    root =
+                        Node.group "root" [ childRect ]
+
+                    clickX : Int
+                    clickX =
+                        vc.xMin + 6
+
+                    clickY : Int
+                    clickY =
+                        vc.yMin + 6
+                in
+                start 1 esp32 root
+                    |> leftClick esp32 1 clickX clickY
+                    |> previewKeyDown "ArrowRight" { shift = True }
+                    |> previewKeyDown "ArrowDown" { shift = True }
+                    |> ProgramTest.expectModel
+                        (\model ->
+                            case connectedDesiredRoot model of
+                                Nothing ->
+                                    Expect.fail "expected Connected model"
+
+                                Just desiredRootNode ->
+                                    case Path.getNodeAtPath [ 0 ] desiredRootNode of
+                                        Nothing ->
+                                            Expect.fail "expected child at path [0]"
+
+                                        Just n ->
+                                            case n.type_ of
+                                                Rect r ->
+                                                    ( r.x, r.y )
+                                                        |> Expect.equal ( vc.xMin + 9, vc.yMin + 9 )
+
+                                                _ ->
+                                                    Expect.fail "expected Rect"
+                        )
+        , Test.test "preview surface: arrow keys do nothing without a selection" <|
+            \() ->
+                let
+                    esp32 : ESP32
+                    esp32 =
+                        { videoWidth = 20
+                        , videoHeight = 20
+                        , crtPaddingLeft = 0
+                        , crtPaddingRight = 0
+                        , crtPaddingTop = 0
+                        , crtPaddingBottom = 0
+                        , maxTotalNodes = 64
+                        , nodeGroupMaxChildren = 8
+                        , tileSize = 8
+                        , fonts = []
+                        }
+
+                    vc : VideoConstants
+                    vc =
+                        ESP32.videoConstants esp32
+
+                    childRect : Node
+                    childRect =
+                        Node.rect "r"
+                            { x = vc.xMin + 2
+                            , y = vc.yMin + 2
+                            , w = 4
+                            , h = 4
+                            , color = Color.white
+                            }
+
+                    root : Node
+                    root =
+                        Node.group "root" [ childRect ]
+
+                    beforeHash : Int
+                    beforeHash =
+                        root.hash
+                in
+                start 1 esp32 root
+                    |> previewKeyDown "ArrowLeft" { shift = False }
+                    |> ProgramTest.expectModel
+                        (\model ->
+                            case connectedDesiredRoot model of
+                                Nothing ->
+                                    Expect.fail "expected Connected model"
+
+                                Just desiredRootNode ->
+                                    desiredRootNode.hash
+                                        |> Expect.equal beforeHash
+                        )
         ]
 
 
@@ -861,6 +1105,35 @@ previewMouseEvent esp32 zoom eventName videoX videoY button =
 previewSurfaceSelector : List Test.Html.Selector.Selector
 previewSurfaceSelector =
     [ Test.Html.Selector.id "preview-surface" ]
+
+
+connectedDesiredRoot : Main.Model -> Maybe Node
+connectedDesiredRoot model =
+    case model of
+        Main.Connected m ->
+            Just (Main.desiredRoot m.rootNode)
+
+        Main.LocalConnected m ->
+            Just (Main.desiredRoot m.rootNode)
+
+        Main.NotConnected _ ->
+            Nothing
+
+
+previewKeyDown :
+    String
+    -> { shift : Bool }
+    -> ProgramTest.ProgramTest Main.Model Main.Msg (Cmd Main.Msg)
+    -> ProgramTest.ProgramTest Main.Model Main.Msg (Cmd Main.Msg)
+previewKeyDown key { shift } =
+    ProgramTest.simulateDomEvent
+        (Query.find previewSurfaceSelector)
+        ( "keydown"
+        , Encode.object
+            [ ( "key", Encode.string key )
+            , ( "shiftKey", Encode.bool shift )
+            ]
+        )
 
 
 layerMenuSelector : List Test.Html.Selector.Selector
