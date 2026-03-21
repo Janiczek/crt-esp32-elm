@@ -1,12 +1,12 @@
 module NodeBinaryTests exposing (suite)
 
 import Bitmap
-import Bytes
+import Bytes exposing (Bytes)
 import Bytes.Decode
 import Bytes.Decode.Extra
 import Bytes.Encode
 import Expect
-import Node
+import Node exposing (Node)
 import Test exposing (Test)
 
 
@@ -46,6 +46,7 @@ suite =
         [ Test.test "Bitmap encoder writes the expected header fields" <|
             \_ ->
                 let
+                    encoded : Bytes
                     encoded =
                         Node.bitmap "bm" { x = 3, y = 4, w = 2, h = 2, bitDepth = Bitmap.BitDepth4, data = [ 0x12, 0x34 ] }
                             |> Node.bytesEncoder
@@ -70,6 +71,7 @@ suite =
         , Test.test "Bitmap constructor normalizes packed byte length" <|
             \_ ->
                 let
+                    node : Node
                     node =
                         Node.bitmap "bm" { x = 0, y = 0, w = 3, h = 3, bitDepth = Bitmap.BitDepth1, data = [ 255 ] }
                 in

@@ -2,9 +2,9 @@ module NodeJsonTests exposing (suite)
 
 import Bitmap
 import Color
-import ESP32
+import ESP32 exposing (ESP32)
 import Expect
-import Font
+import Font exposing (Font)
 import Fuzzers
 import Json.Decode as Decode
 import Json.Encode as Encode
@@ -17,20 +17,15 @@ suite =
     Test.describe "Node JSON"
         [ Test.fuzz Fuzzers.esp32AndFittingNode "roundtrip: encode then decode returns the same node" <|
             \( esp32, node ) ->
-                let
-                    encodedNode =
-                        node
-                            |> Node.jsonEncoder
-                            |> Encode.encode 0
-                in
-                encodedNode
+                node
+                    |> Node.jsonEncoder
+                    |> Encode.encode 0
                     |> Decode.decodeString (Node.jsonDecoder esp32)
-                    |> Result.map (Node.jsonEncoder >> Encode.encode 0)
-                    |> Expect.equal (Ok encodedNode)
+                    |> Expect.equal (Ok node)
         , Test.fuzz Fuzzers.esp32 "Text node decoded with fonts has non-zero bbox" <|
             \esp32 ->
                 let
-                    font : Font.Font
+                    font : Font
                     font =
                         { name = "TestFont"
                         , asciiFirst = 32
@@ -46,6 +41,7 @@ suite =
                     jsonTextNode =
                         """{"type":"Text","key":"t","x":0,"y":0,"text":"A","fontIndex":0,"color":255}"""
 
+                    esp32WithAtLeastOneFont : ESP32
                     esp32WithAtLeastOneFont =
                         { esp32 | fonts = font :: esp32.fonts }
                 in
@@ -89,15 +85,18 @@ suite =
         , Test.fuzz Fuzzers.esp32 "decoder fails when total node count exceeds maxTotalNodes" <|
             \esp32 ->
                 let
+                    jsonText : String
                     jsonText =
                         """{"type":"Group","key":"root","children":[{"type":"Rect","key":"a","x":0,"y":0,"w":1,"h":1,"color":255},{"type":"Rect","key":"b","x":1,"y":1,"w":1,"h":1,"color":255}]}"""
 
+                    esp32WithLimit : ESP32
                     esp32WithLimit =
                         { esp32
                             | maxTotalNodes = 2
                             , nodeGroupMaxChildren = 10
                         }
 
+                    result : Result String Node
                     result =
                         Decode.decodeString
                             (Node.jsonDecoder esp32WithLimit)
@@ -117,15 +116,18 @@ suite =
         , Test.fuzz Fuzzers.esp32 "decoder fails when a group exceeds nodeGroupMaxChildren" <|
             \esp32 ->
                 let
+                    jsonText : String
                     jsonText =
                         """{"type":"Group","key":"root","children":[{"type":"Rect","key":"a","x":0,"y":0,"w":1,"h":1,"color":255},{"type":"Rect","key":"b","x":1,"y":1,"w":1,"h":1,"color":255}]}"""
 
+                    esp32WithLimit : ESP32
                     esp32WithLimit =
                         { esp32
                             | maxTotalNodes = 10
                             , nodeGroupMaxChildren = 1
                         }
 
+                    result : Result String Node
                     result =
                         Decode.decodeString
                             (Node.jsonDecoder esp32WithLimit)

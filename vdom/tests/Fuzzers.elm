@@ -50,7 +50,7 @@ leafNode =
 
 textNode : Fuzzer Node
 textNode =
-    Fuzz.map5 (\x y fontIndex c text -> Node.text [] text { x = x, y = y, text = text, fontIndex = fontIndex, color = c })
+    Fuzz.map5 (\x y fontIndex c text -> Node.text (List.repeat 4 fittingFont) text { x = x, y = y, text = text, fontIndex = fontIndex, color = c })
         (Fuzz.intRange 0 512)
         (Fuzz.intRange 0 512)
         (Fuzz.intRange 0 3)
@@ -235,6 +235,7 @@ node_ maxDepth =
         Fuzz.map5
             (\x y w h bd ->
                 let
+                    byteLen : Int
                     byteLen =
                         ((w * h * Bitmap.bitDepthToInt bd) + 7) // 8
                 in

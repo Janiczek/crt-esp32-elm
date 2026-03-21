@@ -4,6 +4,7 @@ import Color
 import Expect
 import Fuzzers
 import Node exposing (Node, Type(..))
+import Set
 import Test exposing (Test)
 
 
@@ -18,6 +19,7 @@ suite =
             , Test.test "nested groups count all descendants" <|
                 \() ->
                     let
+                        tree : Node
                         tree =
                             Node.group "root"
                                 [ Node.rect "a" { x = 0, y = 0, w = 1, h = 1, color = Color.black }
@@ -54,6 +56,7 @@ suite =
             , Test.test "nested groups track widest group" <|
                 \() ->
                     let
+                        tree : Node
                         tree =
                             Node.group "root"
                                 [ Node.rect "a" { x = 0, y = 0, w = 1, h = 1, color = Color.black }
@@ -71,15 +74,19 @@ suite =
             , Test.fuzz Fuzzers.node "wrapping in a group with same number of siblings increases maxGroupChildren by one" <|
                 \node_ ->
                     let
+                        maxChildren : Int
                         maxChildren =
                             Node.maxGroupChildren node_
 
+                        sibling : Node
                         sibling =
                             Node.rect "sib" { x = 0, y = 0, w = 1, h = 1, color = Color.gray }
 
+                        siblings : List Node
                         siblings =
                             List.repeat maxChildren sibling
 
+                        wrapped : Node
                         wrapped =
                             Node.group "wrap" (node_ :: siblings)
                     in
@@ -116,5 +123,43 @@ suite =
                             ]
                         )
                         |> Expect.equal 3
+            ]
+        , Test.describe "allKeys"
+            [ Test.test "collects every key in the tree" <|
+                \() ->
+                    let
+                        tree : Node
+                        tree =
+                            Node.group "root"
+                                [ Node.rect "a" { x = 0, y = 0, w = 1, h = 1, color = Color.black }
+                                , Node.group "mid"
+                                    [ Node.rect "b" { x = 0, y = 0, w = 1, h = 1, color = Color.gray }
+                                    , Node.rect "c" { x = 0, y = 0, w = 1, h = 1, color = Color.white }
+                                    , Node.group "deep"
+                                        [ Node.rect "d" { x = 0, y = 0, w = 1, h = 1, color = Color.white }
+                                        ]
+                                    ]
+                                ]
+                    in
+                    Node.allKeys tree
+                        |> Expect.equal (Set.fromList [ "root", "a", "mid", "b", "c", "deep", "d" ])
+            ]
+        , Test.describe "uniqueKeyAmong"
+            [ Test.test "returns base when unused" <|
+                \() ->
+                    Node.uniqueKeyAmong (Set.singleton "other") "rect"
+                        |> Expect.equal "rect"
+            , Test.test "appends -2 when base is taken" <|
+                \() ->
+                    Node.uniqueKeyAmong (Set.singleton "rect") "rect"
+                        |> Expect.equal "rect-2"
+            , Test.test "skips -2 when that key is also taken" <|
+                \() ->
+                    Node.uniqueKeyAmong (Set.fromList [ "rect", "rect-2" ]) "rect"
+                        |> Expect.equal "rect-3"
+            , Test.test "doesn't skip -3 even though -4 exists" <|
+                \() ->
+                    Node.uniqueKeyAmong (Set.fromList [ "rect", "rect-2", "rect-4" ]) "rect"
+                        |> Expect.equal "rect-3"
             ]
         ]

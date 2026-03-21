@@ -72,9 +72,6 @@ TODO: is any of this generalizable / extractable? Seems like there's a bunch of 
 rowGraysSequential : BitDepth -> Int -> Int -> List Int -> List Int
 rowGraysSequential bitDepth width row data =
     let
-        p0 =
-            row * width
-
         padEndZeros : Int -> List Int -> List Int
         padEndZeros left acc =
             List.reverse acc ++ List.repeat left 0
@@ -83,6 +80,10 @@ rowGraysSequential bitDepth width row data =
         []
 
     else
+        let
+            p0 =
+                row * width
+        in
         case bitDepth of
             BitDepth8 ->
                 List.drop p0 data

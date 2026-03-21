@@ -1,4 +1,4 @@
-port module Main exposing (Flags, Model(..), Msg, RootNode(..), init, main, update, view)
+port module Main exposing (Flags, LoadingProgress, Model(..), ModelConnected, ModelNotConnected, Msg, PreviewContextMenu, PreviewDragState, RootNode(..), main, update, view)
 
 {-| A web app to connect to and control an ESP32 over WiFi/WebSocket.
 
@@ -16,7 +16,7 @@ TODO:
 
 -}
 
-import Bitmap exposing (BitDepth(..))
+import Bitmap exposing (BitDepth)
 import Bitmap.Bd1_256_16_TestStrip
 import Bitmap.Bd1_64_64_Duke
 import Bitmap.Bd2_256_16_TestStrip
@@ -25,7 +25,6 @@ import Bitmap.Bd4_256_16_TestStrip
 import Bitmap.Bd4_64_64_Duke
 import Bitmap.Bd8_256_16_TestStrip
 import Bitmap.Bd8_64_64_Duke
-import BoundingBox
 import Browser exposing (Document)
 import Browser.Events
 import Bytes exposing (Bytes)
@@ -143,7 +142,7 @@ type alias ModelConnected =
     , rootNodeJsonText : String
     , rootNodeJsonError : Maybe String
     , selectedPath : Maybe (List Int)
-    , previewMenu : Maybe PreviewMenu
+    , previewContextMenu : Maybe PreviewContextMenu
     , previewZoom : Int
     , previewDrag : Maybe PreviewDragState
     , {- the next PreviewClicked should not run normal click-to-select logic
@@ -163,7 +162,7 @@ type alias PreviewDragState =
     }
 
 
-type alias PreviewMenu =
+type alias PreviewContextMenu =
     { x : Int
     , y : Int
     , paths : List (List Int)
@@ -197,6 +196,9 @@ type MsgConnected
     | RestoreRootNodeJson
     | ThrottleFrame
     | RootNodeAcked
+    | SelectedUnknown String String
+    | -- done for StopPropagation
+      InteractedWithSelect
 
 
 port connect : () -> Cmd msg
@@ -249,7 +251,7 @@ addChildValidationError model parentPath type_ =
             Path.insertChildAtPath
                 parentPath
                 insertIndex
-                (defaultNodeForType model.esp32.fonts model.videoConstants type_)
+                (newChildForInsert model.esp32.fonts model.videoConstants root type_)
                 root
     in
     if candidateRoot.hash == root.hash then
@@ -371,6 +373,20 @@ defaultNodeForType fonts vc type_ =
 
         Group _ ->
             Node.group "group" []
+
+
+{-| Default child for insert, with a key that does not collide with any key under `root`.
+-}
+newChildForInsert : List Font -> VideoConstants -> Node -> Type -> Node
+newChildForInsert fonts vc root type_ =
+    let
+        prototype =
+            defaultNodeForType fonts vc type_
+
+        key =
+            Node.uniqueKeyAmong (Node.allKeys root) prototype.key
+    in
+    Node.fromKeyAndType fonts key prototype.type_
 
 
 main : Program Flags Model Msg
@@ -528,7 +544,7 @@ update msg model =
                 , rootNodeJsonText = encodeNodeJson root
                 , rootNodeJsonError = Nothing
                 , selectedPath = Nothing
-                , previewMenu = Nothing
+                , previewContextMenu = Nothing
                 , previewZoom = 3
                 , previewDrag = Nothing
                 , previewIgnoreClick = False
@@ -619,7 +635,7 @@ update msg model =
                 , rootNodeJsonText = json
                 , rootNodeJsonError = Nothing
                 , selectedPath = Nothing
-                , previewMenu = Nothing
+                , previewContextMenu = Nothing
                 , previewZoom = 3
                 , previewDrag = Nothing
                 , previewIgnoreClick = False
@@ -712,7 +728,7 @@ updateConnected_ cfg msgConnected modelConnected =
         SelectNode path ->
             ( { modelConnected
                 | selectedPath = path
-                , previewMenu = Nothing
+                , previewContextMenu = Nothing
                 , previewDrag = Nothing
                 , previewIgnoreClick = False
               }
@@ -729,14 +745,13 @@ updateConnected_ cfg msgConnected modelConnected =
                 let
                     hits =
                         Node.hitPathsAtPixel
-                            modelConnected.esp32.fonts
                             x
                             y
                             (desiredRoot modelConnected.rootNode)
                 in
                 ( { modelConnected
                     | selectedPath = List.head hits
-                    , previewMenu = Nothing
+                    , previewContextMenu = Nothing
                   }
                 , Cmd.none
                 )
@@ -745,7 +760,6 @@ updateConnected_ cfg msgConnected modelConnected =
             let
                 hits =
                     Node.hitPathsAtPixel
-                        modelConnected.esp32.fonts
                         x
                         y
                         (desiredRoot modelConnected.rootNode)
@@ -753,14 +767,14 @@ updateConnected_ cfg msgConnected modelConnected =
             if List.isEmpty hits then
                 ( { modelConnected
                     | selectedPath = Nothing
-                    , previewMenu = Nothing
+                    , previewContextMenu = Nothing
                   }
                 , Cmd.none
                 )
 
             else
                 ( { modelConnected
-                    | previewMenu =
+                    | previewContextMenu =
                         Just
                             { x = x
                             , y = y
@@ -822,7 +836,7 @@ updateConnected_ cfg msgConnected modelConnected =
                         Nothing ->
                             desiredRoot modelConnected.rootNode
             in
-            ( { modelConnected | previewMenu = Nothing }
+            ( { modelConnected | previewContextMenu = Nothing }
                 |> cfg.commitRoot newRoot
             , Cmd.none
             )
@@ -833,17 +847,21 @@ updateConnected_ cfg msgConnected modelConnected =
                     desiredRoot modelConnected.rootNode
 
                 newChild =
-                    defaultNodeForType modelConnected.esp32.fonts modelConnected.videoConstants type_
+                    newChildForInsert modelConnected.esp32.fonts modelConnected.videoConstants root type_
 
                 newRoot =
                     Path.insertChildAtPath parentPath index newChild root
             in
             case List.head (Node.limitErrors modelConnected.esp32 newRoot) of
                 Just _ ->
-                    ( { modelConnected | previewMenu = Nothing }, Cmd.none )
+                    ( { modelConnected | previewContextMenu = Nothing }, Cmd.none )
 
                 Nothing ->
-                    ( { modelConnected | previewMenu = Nothing, previewDrag = Nothing }
+                    ( { modelConnected
+                        | previewContextMenu = Nothing
+                        , previewDrag = Nothing
+                        , selectedPath = Just (parentPath ++ [ index ])
+                      }
                         |> cfg.commitRoot newRoot
                     , Cmd.none
                     )
@@ -864,7 +882,7 @@ updateConnected_ cfg msgConnected modelConnected =
                                 else
                                     Just selectedPath
                             )
-                , previewMenu = Nothing
+                , previewContextMenu = Nothing
                 , previewDrag = Nothing
               }
                 |> cfg.commitRoot newRoot
@@ -874,7 +892,7 @@ updateConnected_ cfg msgConnected modelConnected =
         SetPreviewZoom zoom ->
             ( { modelConnected
                 | previewZoom = zoom
-                , previewMenu = Nothing
+                , previewContextMenu = Nothing
                 , previewDrag = Nothing
               }
             , Cmd.none
@@ -883,7 +901,7 @@ updateConnected_ cfg msgConnected modelConnected =
         SetRootNodeJsonText text ->
             case Json.Decode.decodeString (Node.jsonDecoder modelConnected.esp32) text of
                 Ok parsed ->
-                    ( { modelConnected | previewMenu = Nothing, previewDrag = Nothing }
+                    ( { modelConnected | previewContextMenu = Nothing, previewDrag = Nothing }
                         |> cfg.commitRoot parsed
                     , Cmd.none
                     )
@@ -892,7 +910,7 @@ updateConnected_ cfg msgConnected modelConnected =
                     ( { modelConnected
                         | rootNodeJsonText = text
                         , rootNodeJsonError = Just (Json.Decode.errorToString err)
-                        , previewMenu = Nothing
+                        , previewContextMenu = Nothing
                       }
                     , Cmd.none
                     )
@@ -901,7 +919,7 @@ updateConnected_ cfg msgConnected modelConnected =
             ( { modelConnected
                 | rootNodeJsonText = encodeNodeJson (desiredRoot modelConnected.rootNode)
                 , rootNodeJsonError = Nothing
-                , previewMenu = Nothing
+                , previewContextMenu = Nothing
                 , previewDrag = Nothing
               }
             , Cmd.none
@@ -974,6 +992,12 @@ updateConnected_ cfg msgConnected modelConnected =
 
             else
                 ( modelConnected, Cmd.none )
+
+        InteractedWithSelect ->
+            ( modelConnected, Cmd.none )
+
+        SelectedUnknown s v ->
+            Debug.todo ("SelectedUnknown " ++ s ++ " " ++ v)
 
 
 setRootNode : ESP32 -> VideoConstants -> Node -> Node -> Cmd MsgConnected
@@ -1196,7 +1220,7 @@ tryStartPreviewDrag videoX videoY clientX clientY modelConnected =
             desiredRoot modelConnected.rootNode
 
         hits =
-            Node.hitPathsAtPixel modelConnected.esp32.fonts videoX videoY root
+            Node.hitPathsAtPixel videoX videoY root
     in
     case List.head hits of
         Nothing ->
@@ -1220,7 +1244,7 @@ tryStartPreviewDrag videoX videoY clientX clientY modelConnected =
                                 Just startXY ->
                                     { modelConnected
                                         | selectedPath = Just path
-                                        , previewMenu = Nothing
+                                        , previewContextMenu = Nothing
                                         , previewDrag =
                                             Just
                                                 { path = path
@@ -1282,15 +1306,15 @@ applyPreviewDragMove commitRoot clientX clientY modelConnected =
 
                                             nextDrag =
                                                 Just { drag | moved = newMoved }
-
-                                            newType =
-                                                Node.typeWithNewXY newX newY node.type_
                                         in
                                         if newX == curX && newY == curY then
                                             { modelConnected | previewDrag = nextDrag }
 
                                         else
                                             let
+                                                newType =
+                                                    Node.typeWithNewXY newX newY node.type_
+
                                                 newNode =
                                                     Node.fromKeyAndType modelConnected.esp32.fonts node.key newType
 
@@ -1298,7 +1322,7 @@ applyPreviewDragMove commitRoot clientX clientY modelConnected =
                                                     Path.setNodeAtPath drag.path newNode root
                                             in
                                             { modelConnected
-                                                | previewMenu = Nothing
+                                                | previewContextMenu = Nothing
                                                 , previewDrag = nextDrag
                                             }
                                                 |> commitRoot newRoot
@@ -1340,46 +1364,47 @@ selectionBorderView vc zoom maybeNode =
             let
                 bbox =
                     node.bbox
-
-                leftPx =
-                    (bbox.x - vc.xMin) * zoom
-
-                topPx =
-                    (bbox.y - vc.yMin) * zoom
-
-                widthPx =
-                    max 1 (bbox.w * zoom)
-
-                heightPx =
-                    max 1 (bbox.h * zoom)
-
-                borderStyle =
-                    case node.type_ of
-                        Group _ ->
-                            "dashed"
-
-                        Rect _ ->
-                            "solid"
-
-                        RectFill _ ->
-                            "solid"
-
-                        XLine _ ->
-                            "solid"
-
-                        YLine _ ->
-                            "solid"
-
-                        Text _ ->
-                            "solid"
-
-                        Bitmap _ ->
-                            "solid"
             in
             if bbox.w <= 0 || bbox.h <= 0 then
                 Html.text ""
 
             else
+                let
+                    leftPx =
+                        (bbox.x - vc.xMin) * zoom
+
+                    topPx =
+                        (bbox.y - vc.yMin) * zoom
+
+                    widthPx =
+                        max 1 (bbox.w * zoom)
+
+                    heightPx =
+                        max 1 (bbox.h * zoom)
+
+                    borderStyle =
+                        case node.type_ of
+                            Group _ ->
+                                "dashed"
+
+                            Rect _ ->
+                                "solid"
+
+                            RectFill _ ->
+                                "solid"
+
+                            XLine _ ->
+                                "solid"
+
+                            YLine _ ->
+                                "solid"
+
+                            Text _ ->
+                                "solid"
+
+                            Bitmap _ ->
+                                "solid"
+                in
                 Html.div
                     [ Html.Attributes.id "preview-selection-border"
                     , Html.Attributes.style "position" "absolute"
@@ -1396,8 +1421,8 @@ selectionBorderView vc zoom maybeNode =
                     []
 
 
-previewMenuView : VideoConstants -> Int -> Node -> PreviewMenu -> Html Msg
-previewMenuView vc zoom root previewMenu =
+previewContextMenuView : VideoConstants -> Int -> Node -> PreviewContextMenu -> Html Msg
+previewContextMenuView vc zoom root previewContextMenu =
     let
         menuButton path node =
             Html.button
@@ -1410,7 +1435,7 @@ previewMenuView vc zoom root previewMenu =
                 [ Html.text (Node.displayLabel node) ]
 
         items =
-            previewMenu.paths
+            previewContextMenu.paths
                 |> List.filterMap
                     (\path ->
                         Path.getNodeAtPath path root
@@ -1420,8 +1445,8 @@ previewMenuView vc zoom root previewMenu =
     Html.div
         [ Html.Attributes.id "preview-layer-menu"
         , Html.Attributes.style "position" "absolute"
-        , Html.Attributes.style "left" (String.fromInt ((previewMenu.x - vc.xMin) * zoom) ++ "px")
-        , Html.Attributes.style "top" (String.fromInt ((previewMenu.y - vc.yMin) * zoom) ++ "px")
+        , Html.Attributes.style "left" (String.fromInt ((previewContextMenu.x - vc.xMin) * zoom) ++ "px")
+        , Html.Attributes.style "top" (String.fromInt ((previewContextMenu.y - vc.yMin) * zoom) ++ "px")
         , Html.Attributes.style "z-index" "2"
         , Html.Attributes.style "display" "flex"
         , Html.Attributes.style "flex-direction" "column"
@@ -1545,9 +1570,9 @@ viewPreviewSurface model =
                 ]
             ]
         , selectionBorderView vc zoom selectedNode
-        , case model.previewMenu of
-            Just previewMenu ->
-                previewMenuView vc zoom root previewMenu
+        , case model.previewContextMenu of
+            Just previewContextMenu ->
+                previewContextMenuView vc zoom root previewContextMenu
 
             Nothing ->
                 Html.text ""
@@ -1792,7 +1817,8 @@ viewAddChildButton model path =
         in
         Html.span []
             [ Html.select
-                [ Html.Events.on "change"
+                [ Html.Events.stopPropagationOn "click" (Json.Decode.succeed ( MsgConnected InteractedWithSelect, True ))
+                , Html.Events.on "change"
                     (Json.Decode.at [ "target", "value" ] Json.Decode.string
                         |> Json.Decode.map
                             (\v ->
@@ -1823,14 +1849,20 @@ viewAddChildButton model path =
                                         MsgConnected (InsertChild path insertIndex (Group { children = [] }))
 
                                     _ ->
-                                        MsgConnected (SelectNode (Just path))
+                                        MsgConnected (SelectedUnknown "add child option" v)
                             )
                     )
                 , Html.Attributes.style "padding" "0 0.25rem"
                 , Html.Attributes.id ("add-child-select-" ++ String.join "-" (List.map String.fromInt path))
                 , Html.Attributes.disabled (limitWarning /= Nothing)
+                , Html.Attributes.value ""
                 ]
-                [ Html.option [ Html.Attributes.value "" ] [ Html.text "Add…" ]
+                [ Html.option
+                    [ Html.Attributes.value ""
+                    , Html.Attributes.selected True
+                    , Html.Attributes.disabled True
+                    ]
+                    [ Html.text "Add…" ]
                 , addOption "rect" "Rect"
                 , addOption "rectFill" "RectFill"
                 , addOption "xLine" "XLine"
@@ -2055,7 +2087,7 @@ viewNodeDetails model node path =
                                 (\s ->
                                     String.toInt s
                                         |> Maybe.map (\fontIndex -> MsgConnected (UpdateNodeAtPath path node.key (Text { r | fontIndex = fontIndex })))
-                                        |> Maybe.withDefault (MsgConnected (SelectNode (Just path)))
+                                        |> Maybe.withDefault (MsgConnected (SelectedUnknown "font" s))
                                 )
                             , Html.Attributes.style "width" "100%"
                             , Html.Attributes.style "box-sizing" "border-box"
@@ -2099,7 +2131,7 @@ viewNodeDetails model node path =
                                                         )
                                                     )
                                             )
-                                        |> Maybe.withDefault (MsgConnected (SelectNode (Just path)))
+                                        |> Maybe.withDefault (MsgConnected (SelectedUnknown "bitmap" s))
                                 )
                             , Html.Attributes.style "width" "100%"
                             , Html.Attributes.style "box-sizing" "border-box"
@@ -2164,7 +2196,7 @@ intSliderInput min_ max_ path key toType current =
                     String.toInt s
                         |> Maybe.map (clamp min_ max_)
                         |> Maybe.map (\v -> MsgConnected (UpdateNodeAtPath path key (toType v)))
-                        |> Maybe.withDefault (MsgConnected (SelectNode (Just path)))
+                        |> Maybe.withDefault (MsgConnected (SelectedUnknown "non-int value from a slider" s))
                 )
             , Html.Attributes.style "flex" "1"
             ]
@@ -2177,17 +2209,6 @@ intSliderInput min_ max_ path key toType current =
             ]
             [ Html.text (String.fromInt current_) ]
         ]
-
-
-readOnlyInput : String -> Html Msg
-readOnlyInput value_ =
-    Html.input
-        [ Html.Attributes.value value_
-        , Html.Attributes.readonly True
-        , Html.Attributes.style "width" "100%"
-        , Html.Attributes.style "box-sizing" "border-box"
-        ]
-        []
 
 
 colorInput : List Int -> String -> (Int -> Type) -> Int -> Html Msg
@@ -2212,7 +2233,7 @@ colorInput path key toType current =
                     String.toInt s
                         |> Maybe.map (clamp 0 255)
                         |> Maybe.map (\v -> MsgConnected (UpdateNodeAtPath path key (toType v)))
-                        |> Maybe.withDefault (MsgConnected (SelectNode (Just path)))
+                        |> Maybe.withDefault (MsgConnected (SelectedUnknown "non-int color value from a slider" s))
                 )
             , Html.Attributes.style "flex" "1"
             ]

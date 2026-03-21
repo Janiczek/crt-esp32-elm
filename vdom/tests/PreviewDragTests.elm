@@ -1,6 +1,6 @@
 module PreviewDragTests exposing (suite)
 
-import ESP32 exposing (ESP32)
+import ESP32 exposing (ESP32, VideoConstants)
 import Expect
 import Fuzz
 import Fuzzers
@@ -25,6 +25,7 @@ sampleEsp32 =
     }
 
 
+sampleVc : VideoConstants
 sampleVc =
     ESP32.videoConstants sampleEsp32
 
@@ -34,6 +35,7 @@ suite =
     Test.describe "PreviewDrag.clampedNodeXYFromClientDrag"
         [ Test.describe "unit tests"
             (let
+                testCases : List ( String, ( Int, ( ( Float,Float ), ( Float,Float ), ( Int, Int ) ) ), ( Int, Int ) )
                 testCases =
                     [ ( "zero client delta keeps position"
                       , ( 1, ( ( 10, 20 ), ( 10, 20 ), ( 15, 25 ) ) )
@@ -69,6 +71,7 @@ suite =
                       )
                     ]
 
+                toTest : ( String, ( Int, ( ( Float,Float ), ( Float,Float ), ( Int, Int ) ) ), ( Int, Int ) ) -> Test
                 toTest ( desc, ( zoom, ( clientStart, clientCurrent, pos ) ), expected ) =
                     Test.test desc <|
                         \() ->

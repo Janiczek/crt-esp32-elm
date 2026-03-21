@@ -1,7 +1,7 @@
 module ESP32Tests exposing (suite)
 
-import BoundingBox
-import ESP32 exposing (ESP32)
+import BoundingBox exposing (BoundingBox)
+import ESP32 exposing (ESP32, VideoConstants)
 import Expect
 import Fuzzers
 import Test exposing (Test)
@@ -31,15 +31,19 @@ suite =
                         , fonts = []
                         }
 
+                    vc : VideoConstants
                     vc =
                         ESP32.videoConstants esp32
 
+                    layoutBbox : BoundingBox
                     layoutBbox =
                         { x = vc.xMin, y = vc.yMin, w = 8, h = 4 }
 
+                    grown : ESP32
                     grown =
                         ESP32.growToAccommodate layoutBbox esp32
 
+                    vcGrown : VideoConstants
                     vcGrown =
                         ESP32.videoConstants grown
                 in

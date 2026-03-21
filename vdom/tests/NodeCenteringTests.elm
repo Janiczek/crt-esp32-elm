@@ -3,13 +3,13 @@ module NodeCenteringTests exposing (suite)
 import Bitmap exposing (BitDepth(..))
 import Color
 import ESP32
-import Expect
-import Font
+import Expect exposing (Expectation)
 import Font.Fallback
 import Fuzz
 import Fuzzers
-import Node
+import Node exposing (Node)
 import Test exposing (Test)
+import ESP32 exposing (VideoConstants)
 
 
 suite : Test
@@ -17,6 +17,7 @@ suite =
     Test.describe "Node centering"
         [ Test.describe "unit tests" <|
             let
+                testCases : List ( String, Node, ( Int, Int ) )
                 testCases =
                     [ ( "Rect"
                       , Node.rect "r" { x = 0, y = 0, w = 5, h = 7, color = Color.white }
@@ -56,6 +57,7 @@ suite =
                       )
                     ]
 
+                toTest : ( String, Node, ( Int, Int ) ) -> Test
                 toTest ( name, node, expected ) =
                     Test.test name <|
                         \() ->
@@ -69,9 +71,11 @@ suite =
           <|
             \esp32 ->
                 let
+                    vc : VideoConstants
                     vc =
                         ESP32.videoConstants esp32
 
+                    nodes : List Node
                     nodes =
                         [ Node.rect "r" { x = 0, y = 0, w = 1, h = 1, color = Color.white }
                         , Node.rectFill "rf" { x = 0, y = 0, w = 1, h = 1, color = Color.white }
@@ -82,6 +86,7 @@ suite =
                         , Node.group "g" [ Node.rect "child" { x = 3, y = 4, w = 1, h = 1, color = Color.white } ]
                         ]
 
+                    isClamped : Node -> Bool
                     isClamped node_ =
                         let
                             ( x, y ) =
@@ -104,20 +109,25 @@ suite =
           <|
             \( esp32, wRaw, hRaw ) ->
                 let
+                    vc : VideoConstants
                     vc =
                         ESP32.videoConstants esp32
 
+                    w : Int
                     w =
                         clamp 1 vc.usableWidth wRaw
 
+                    h : Int
                     h =
                         clamp 1 vc.usableHeight hRaw
 
+                    expectedBySize : Int -> Int -> ( Int, Int )
                     expectedBySize width height =
                         ( max vc.xMin (vc.xCenter - (width // 2))
                         , max vc.yMin (vc.yCenter - (height // 2))
                         )
 
+                    checks : List ( String, ( Int, Int ), ( Int, Int ) )
                     checks =
                         [ ( "rect"
                           , Node.centerPosition vc (Node.rect "r" { x = 0, y = 0, w = w, h = h, color = Color.white })
@@ -155,6 +165,7 @@ suite =
                           )
                         ]
 
+                    isCorrect : ( String, ( Int, Int ), ( Int, Int ) ) -> () -> Expectation
                     isCorrect ( label, actualPos, expectedPos ) () =
                         Expect.equal actualPos expectedPos
                             |> Expect.onFail ("Failed for node type: " ++ label)

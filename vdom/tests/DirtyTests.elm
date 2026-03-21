@@ -7,8 +7,8 @@ import Expect
 import Font exposing (Font)
 import Fuzz exposing (Fuzzer)
 import Fuzzers
-import Node
-import Set
+import Node exposing (Node)
+import Set exposing (Set)
 import String.Extra
 import Test exposing (Test)
 
@@ -799,59 +799,65 @@ suite =
             , Test.test "keyed sibling reorder: overlapping rects order swapped marks tiles" <|
                 \_ ->
                     let
-                        grid =
-                            basicGrid
-
+                        bboxA : BoundingBox
                         bboxA =
                             { x = 0, y = 0, w = 8, h = 8 }
 
+                        bboxB : BoundingBox
                         bboxB =
                             { x = 4, y = 4, w = 8, h = 8 }
 
+                        rect : String -> BoundingBox -> Node
                         rect key b =
                             Node.rect key
                                 { x = b.x, y = b.y, w = b.w, h = b.h, color = Color.black }
 
+                        oldRoot : Node
                         oldRoot =
                             Node.group "g" [ rect "a" bboxA, rect "b" bboxB ]
 
+                        newRoot : Node
                         newRoot =
                             Node.group "g" [ rect "b" bboxB, rect "a" bboxA ]
 
+                        expected : Set ( Int, Int )
                         expected =
-                            Dirty.markBbox_TEST grid bboxA
-                                |> Set.union (Dirty.markBbox_TEST grid bboxB)
+                            Dirty.markBbox_TEST basicGrid bboxA
+                                |> Set.union (Dirty.markBbox_TEST basicGrid bboxB)
                     in
-                    Dirty.diff grid [] oldRoot newRoot
+                    Dirty.diff basicGrid [] oldRoot newRoot
                         |> Expect.equal expected
             , Test.test "Rect color-only change: same bbox different color marks border tiles" <|
                 \_ ->
                     let
-                        grid =
-                            basicGrid
-
+                        bbox : BoundingBox
                         bbox =
-                            { x = 0, y = 0, w = 8, h = 8 }
+                            { x = 0
+                            , y = 0
+                            , w = 8
+                            , h = 8
+                            }
 
+                        oldRoot : Node
                         oldRoot =
                             Node.rect "r"
                                 { x = bbox.x, y = bbox.y, w = bbox.w, h = bbox.h, color = Color.black }
 
+                        newRoot : Node
                         newRoot =
                             Node.rect "r"
                                 { x = bbox.x, y = bbox.y, w = bbox.w, h = bbox.h, color = Color.white }
 
+                        expected : Set ( Int, Int )
                         expected =
-                            Dirty.markRectBorder_TEST grid bbox
+                            Dirty.markRectBorder_TEST basicGrid bbox
                     in
-                    Dirty.diff grid [] oldRoot newRoot
+                    Dirty.diff basicGrid [] oldRoot newRoot
                         |> Expect.equal expected
             , Test.test "Text: changed glyph spanning two tiles marks both tiles" <|
                 \_ ->
                     let
-                        grid =
-                            basicGrid
-
+                        font : Font
                         font =
                             { name = "Test"
                             , asciiFirst = 32
@@ -863,26 +869,28 @@ suite =
                             , bits = []
                             }
 
+                        oldRoot : Node
                         oldRoot =
                             Node.text [ font ] "txt" { x = 1, y = 0, text = "a", fontIndex = 0, color = Color.white }
 
+                        newRoot : Node
                         newRoot =
                             Node.text [ font ] "txt" { x = 1, y = 0, text = "b", fontIndex = 0, color = Color.white }
 
+                        glyphBbox : BoundingBox
                         glyphBbox =
                             { x = 1, y = 0, w = 8, h = 8 }
 
+                        expected : Set ( Int, Int )
                         expected =
-                            Dirty.markBbox_TEST grid glyphBbox
+                            Dirty.markBbox_TEST basicGrid glyphBbox
                     in
-                    Dirty.diff grid [ font ] oldRoot newRoot
+                    Dirty.diff basicGrid [ font ] oldRoot newRoot
                         |> Expect.equal expected
             , Test.test "Text: leading newline A to \\nA marks tile containing second line" <|
                 \_ ->
                     let
-                        grid =
-                            basicGrid
-
+                        font : Font
                         font =
                             { name = "Test"
                             , asciiFirst = 32
@@ -894,13 +902,15 @@ suite =
                             , bits = []
                             }
 
+                        oldRoot : Node
                         oldRoot =
                             Node.text [ font ] "txt" { x = 0, y = 0, text = "A", fontIndex = 0, color = Color.white }
 
+                        newRoot : Node
                         newRoot =
                             Node.text [ font ] "txt" { x = 0, y = 0, text = "\nA", fontIndex = 0, color = Color.white }
                     in
-                    Dirty.diff grid [ font ] oldRoot newRoot
+                    Dirty.diff basicGrid [ font ] oldRoot newRoot
                         |> Expect.equalSets (Set.fromList [ ( 0, 0 ), ( 0, 1 ) ])
             ]
         ]

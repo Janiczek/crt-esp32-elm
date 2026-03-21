@@ -2,10 +2,10 @@ module Node exposing
     ( LimitError(..)
     , Node
     , Type(..)
+    , allKeys
     , bitmap
     , bytesEncoder
     , centerPosition
-    , collectHitPaths
     , displayLabel
     , empty
     , fromKeyAndType
@@ -13,18 +13,16 @@ module Node exposing
     , hitPathsAtPixel
     , jsonDecoder
     , jsonEncoder
-    , label
     , limitErrors
     , maxFontIndex
     , maxGroupChildren
-    , nodeDrawsPixel
     , rect
     , rectFill
     , size
     , text
-    , textDrawsPixel
     , topLeftXY
     , typeWithNewXY
+    , uniqueKeyAmong
     , xLine
     , yLine
     )
@@ -38,12 +36,12 @@ import BytesExtraExtra
 import Color exposing (Color)
 import ESP32 exposing (ESP32, VideoConstants)
 import FNV1a
-import Flate
 import Font exposing (Font)
 import Json.Decode exposing (Decoder)
 import Json.Decode.Extra
 import Json.Encode
 import List.Extra
+import Set exposing (Set)
 
 
 type alias Node =
@@ -144,6 +142,57 @@ displayLabel node_ =
     label node_ ++ " \"" ++ node_.key ++ "\""
 
 
+{-| Every `key` on this node and all descendants.
+-}
+allKeys : Node -> Set String
+allKeys node_ =
+    case node_.type_ of
+        Rect _ ->
+            Set.singleton node_.key
+
+        RectFill _ ->
+            Set.singleton node_.key
+
+        XLine _ ->
+            Set.singleton node_.key
+
+        YLine _ ->
+            Set.singleton node_.key
+
+        Text _ ->
+            Set.singleton node_.key
+
+        Bitmap _ ->
+            Set.singleton node_.key
+
+        Group { children } ->
+            List.foldl (\c acc -> Set.union (allKeys c) acc) (Set.singleton node_.key) children
+
+
+{-| If `base` is already in `used`, return `base ++ "-2"`, `base ++ "-3"`, … until unused.
+-}
+uniqueKeyAmong : Set String -> String -> String
+uniqueKeyAmong used base =
+    if Set.member base used then
+        uniqueKeyAmongSuffix used base 2
+
+    else
+        base
+
+
+uniqueKeyAmongSuffix : Set String -> String -> Int -> String
+uniqueKeyAmongSuffix used base n =
+    let
+        candidate =
+            base ++ "-" ++ String.fromInt n
+    in
+    if Set.member candidate used then
+        uniqueKeyAmongSuffix used base (n + 1)
+
+    else
+        candidate
+
+
 {-| The `(x, y)` stored on each leaf `Type` (same fields `typeWithNewXY` edits).
 
 We use this instead of `Node.bbox` because bbox is derived (union of children, text metrics, etc.)
@@ -203,103 +252,8 @@ typeWithNewXY x y type_ =
             type_
 
 
-textDrawsPixel : List Font -> Int -> Int -> { x : Int, y : Int, text : String, fontIndex : Int, color : Color } -> Bool
-textDrawsPixel fonts px py r =
-    case List.Extra.getAt r.fontIndex fonts of
-        Nothing ->
-            False
-
-        Just font ->
-            let
-                lineHeight =
-                    font.glyphHeight + font.extraLineHeight
-
-                hasChar c =
-                    let
-                        code =
-                            Char.toCode c
-                    in
-                    code >= font.asciiFirst && code <= font.asciiLast
-
-                go curX curY chars =
-                    case chars of
-                        [] ->
-                            False
-
-                        '\n' :: rest ->
-                            go r.x (curY + lineHeight) rest
-
-                        c :: rest ->
-                            let
-                                nextX =
-                                    curX
-                                        + (if hasChar c then
-                                            font.glyphWidth
-
-                                           else
-                                            0
-                                          )
-                            in
-                            if
-                                hasChar c
-                                    && px
-                                    >= curX
-                                    && px
-                                    < curX
-                                    + font.glyphWidth
-                                    && py
-                                    >= curY
-                                    && py
-                                    < curY
-                                    + font.glyphHeight
-                            then
-                                True
-
-                            else
-                                go nextX curY rest
-            in
-            go r.x r.y (String.toList r.text)
-
-
-nodeDrawsPixel : List Font -> Int -> Int -> Node -> Bool
-nodeDrawsPixel fonts px py node_ =
-    if not (contains px py node_.bbox) then
-        False
-
-    else
-        case node_.type_ of
-            Rect { x, y, w, h } ->
-                let
-                    x2 =
-                        x + w - 1
-
-                    y2 =
-                        y + h - 1
-                in
-                ((py == y || py == y2) && px >= x && px <= x2)
-                    || ((px == x || px == x2) && py >= y && py <= y2)
-
-            RectFill _ ->
-                True
-
-            XLine { x, y, len } ->
-                len > 0 && py == y && px >= x && px < x + len
-
-            YLine { x, y, len } ->
-                len > 0 && px == x && py >= y && py < y + len
-
-            Text r ->
-                textDrawsPixel fonts px py r
-
-            Bitmap _ ->
-                True
-
-            Group _ ->
-                False
-
-
-collectHitPaths : List Font -> Int -> Int -> List Int -> Node -> List (List Int)
-collectHitPaths fonts px py path node_ =
+collectHitPaths : Int -> Int -> List Int -> Node -> List (List Int)
+collectHitPaths px py path node_ =
     if not (contains px py node_.bbox) then
         []
 
@@ -309,7 +263,7 @@ collectHitPaths fonts px py path node_ =
                 children
                     |> List.indexedMap
                         (\i child ->
-                            collectHitPaths fonts px py (path ++ [ i ]) child
+                            collectHitPaths px py (path ++ [ i ]) child
                         )
                     |> List.reverse
                     |> List.concat
@@ -333,9 +287,9 @@ collectHitPaths fonts px py path node_ =
                 [ path ]
 
 
-hitPathsAtPixel : List Font -> Int -> Int -> Node -> List (List Int)
-hitPathsAtPixel fonts px py root =
-    collectHitPaths fonts px py [] root
+hitPathsAtPixel : Int -> Int -> Node -> List (List Int)
+hitPathsAtPixel px py root =
+    collectHitPaths px py [] root
 
 
 text : List Font -> String -> { x : Int, y : Int, text : String, fontIndex : Int, color : Color } -> Node
@@ -442,8 +396,8 @@ normalizeBitmapData expectedLen data =
     let
         normalized =
             data
-                |> List.map (Bitwise.and 0xFF)
                 |> List.take expectedLen
+                |> List.map (Bitwise.and 0xFF)
     in
     normalized
         ++ -- padding the rest of the data to the expected w * h

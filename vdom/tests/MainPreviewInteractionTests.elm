@@ -3,7 +3,7 @@ module MainPreviewInteractionTests exposing (suite)
 import Bitmap exposing (BitDepth(..))
 import BoundingBox exposing (BoundingBox)
 import Color
-import ESP32 exposing (ESP32)
+import ESP32 exposing (ESP32, VideoConstants)
 import Expect
 import Font
 import Fuzz exposing (Fuzzer)
@@ -37,6 +37,7 @@ suite =
           <|
             \zoom ( esp32, node ) ->
                 let
+                    s : OverlapPixelScenario
                     s =
                         overlapPixelScenario esp32 node
                 in
@@ -63,6 +64,7 @@ suite =
           <|
             \( zoom, ( esp32, node ) ) ->
                 let
+                    s : OverlapPixelScenario
                     s =
                         overlapPixelScenario esp32 node
                 in
@@ -83,6 +85,7 @@ suite =
           <|
             \zoom ( esp32, node ) ->
                 let
+                    s : OverlapPixelScenario
                     s =
                         overlapPixelScenario esp32 node
                 in
@@ -109,6 +112,7 @@ suite =
           <|
             \clickCase ->
                 let
+                    menuRoot : Node
                     menuRoot =
                         clickCase.scenario.menuRoot
                 in
@@ -123,6 +127,7 @@ suite =
           <|
             \clickCase ->
                 let
+                    esp32 : ESP32
                     esp32 =
                         clickCase.esp32
                 in
@@ -173,68 +178,130 @@ suite =
                         , nodeGroupMaxChildren = 32
                     }
                     (Node.group "root" [])
-                    |> ProgramTest.simulateDomEvent
-                        (Query.find [ Test.Html.Selector.id "add-child-select-" ])
-                        ( "change"
-                        , Encode.object
-                            [ ( "target"
-                              , Encode.object
-                                    [ ( "value", Encode.string "rect" ) ]
-                              )
-                            ]
-                        )
+                    |> addGroupChild [] "rect"
                     |> ProgramTest.ensureViewHas
                         [ Test.Html.Selector.text "Add disabled: max total nodes reached (2)." ]
                     |> ProgramTest.expectView
                         (\v ->
                             v
-                                |> Query.find [ Test.Html.Selector.id "add-child-select-" ]
+                                |> Query.find [ Test.Html.Selector.id (addGroupChildSelectId []) ]
                                 |> Query.has
                                     [ Test.Html.Selector.attribute (Html.Attributes.disabled True) ]
                         )
+        , Test.test "add dropdown: creating a child selects the new node" <|
+            \() ->
+                let
+                    esp32 : ESP32
+                    esp32 =
+                        { videoWidth = 20
+                        , videoHeight = 20
+                        , crtPaddingLeft = 0
+                        , crtPaddingRight = 0
+                        , crtPaddingTop = 0
+                        , crtPaddingBottom = 0
+                        , maxTotalNodes = 64
+                        , nodeGroupMaxChildren = 8
+                        , tileSize = 8
+                        , fonts = []
+                        }
+
+                    vc : VideoConstants
+                    vc =
+                        ESP32.videoConstants esp32
+
+                    newRect : Node
+                    newRect =
+                        Node.rect "rect"
+                            { x = vc.xMin
+                            , y = vc.yMin
+                            , w = 10
+                            , h = 10
+                            , color = Color.white
+                            }
+                in
+                start 1 esp32 (Node.group "root" [])
+                    |> addGroupChild [] "rect"
+                    |> expectSelected (String.fromInt newRect.hash)
+        , Test.test "add dropdown: second rect of same kind gets key rect-2 and is selected" <|
+            \() ->
+                let
+                    esp32 : ESP32
+                    esp32 =
+                        { videoWidth = 20
+                        , videoHeight = 20
+                        , crtPaddingLeft = 0
+                        , crtPaddingRight = 0
+                        , crtPaddingTop = 0
+                        , crtPaddingBottom = 0
+                        , maxTotalNodes = 64
+                        , nodeGroupMaxChildren = 8
+                        , tileSize = 8
+                        , fonts = []
+                        }
+
+                    vc : VideoConstants
+                    vc =
+                        ESP32.videoConstants esp32
+
+                    root : Node
+                    root =
+                        Node.group "root"
+                            [ Node.rect "rect"
+                                { x = vc.xMin
+                                , y = vc.yMin
+                                , w = 10
+                                , h = 10
+                                , color = Color.white
+                                }
+                            ]
+
+                    secondRect : Node
+                    secondRect =
+                        Node.rect "rect-2"
+                            { x = vc.xMin
+                            , y = vc.yMin
+                            , w = 10
+                            , h = 10
+                            , color = Color.white
+                            }
+                in
+                start 1 esp32 root
+                    |> addGroupChild [] "rect"
+                    |> expectSelected
+                        -- hashes do contain keys, so this says we've selected rect-2!
+                        (String.fromInt secondRect.hash)
         ]
 
 
 clearPixelOutsideRootBbox : ESP32 -> Node -> Maybe ( Int, Int )
 clearPixelOutsideRootBbox esp32 root =
     let
+        vc : VideoConstants
         vc =
             ESP32.videoConstants esp32
 
+        xRange : List Int
         xRange =
             List.range vc.xMin vc.xMax
 
+        yRange : List Int
         yRange =
             List.range vc.yMin vc.yMax
 
-        isOutsideRootBbox x y =
-            let
-                bbox =
-                    root.bbox
-            in
-            x
-                < bbox.x
-                || x
-                >= bbox.x
-                + bbox.w
-                || y
-                < bbox.y
-                || y
-                >= bbox.y
-                + bbox.h
-
+        findInRow : Int -> List Int -> Maybe ( Int, Int )
         findInRow y remainingX =
             case remainingX of
                 [] ->
                     Nothing
 
                 x :: rest ->
-                    if isOutsideRootBbox x y then
+                    if not (BoundingBox.contains x y root.bbox) then
                         Just ( x, y )
 
                     else
                         findInRow y rest
 
+        findInRows : List Int -> Maybe ( Int, Int )
         findInRows remainingY =
             case remainingY of
                 [] ->
@@ -274,6 +341,7 @@ scenarioClickFuzzer toScenario =
     Fuzz.map2
         (\zoom ( esp32, node ) ->
             let
+                scenario : { scenario | hitBbox : BoundingBox, previewEsp32 : ESP32 }
                 scenario =
                     toScenario esp32 node
             in
@@ -337,9 +405,11 @@ clickSequenceCaseFuzzer =
 clickStepsFuzzer : ESP32 -> Fuzzer (List ClickStep)
 clickStepsFuzzer esp32 =
     let
+        vc : VideoConstants
         vc =
             ESP32.videoConstants esp32
 
+        coordFuzzer : Int -> Int -> Fuzzer Int
         coordFuzzer min_ max_ =
             if min_ <= max_ then
                 Fuzz.intRange min_ max_
@@ -347,6 +417,7 @@ clickStepsFuzzer esp32 =
             else
                 Fuzz.constant min_
 
+        clickKindFuzzer : Fuzzer ( String, Int )
         clickKindFuzzer =
             Fuzz.oneOf
                 [ Fuzz.constant ( "click", 0 )
@@ -383,6 +454,7 @@ applyClickSteps esp32 zoom steps program =
 
         step :: rest ->
             let
+                nextProgram : ProgramTest.ProgramTest Main.Model Main.Msg (Cmd Main.Msg)
                 nextProgram =
                     program
                         |> previewClick esp32 zoom step.eventName step.x step.y step.button
@@ -437,9 +509,11 @@ type alias BboxSelectScenario =
 rectScenario : ESP32 -> Node -> BboxSelectScenario
 rectScenario esp32 base =
     let
+        vcBefore : VideoConstants
         vcBefore =
             ESP32.videoConstants esp32
 
+        layoutBbox : BoundingBox
         layoutBbox =
             { x = vcBefore.xMin
             , y = vcBefore.yMin
@@ -447,12 +521,15 @@ rectScenario esp32 base =
             , h = 4
             }
 
+        esp32_ : ESP32
         esp32_ =
             ESP32.growToAccommodate layoutBbox esp32
 
+        vc : VideoConstants
         vc =
             ESP32.videoConstants esp32_
 
+        leftRect : Node
         leftRect =
             Node.rect "bbox-left"
                 { x = vc.xMin
@@ -462,6 +539,7 @@ rectScenario esp32 base =
                 , color = Color.white
                 }
 
+        rightRect : Node
         rightRect =
             Node.rect "bbox-right"
                 { x = vc.xMin + 4
@@ -471,6 +549,7 @@ rectScenario esp32 base =
                 , color = Color.white
                 }
 
+        root : Node
         root =
             appendInjected (asGroup base) [ rightRect, leftRect ]
     in
@@ -487,9 +566,11 @@ rectScenario esp32 base =
 overlapBboxScenario : ESP32 -> Node -> OverlapBboxScenario
 overlapBboxScenario esp32 base =
     let
+        vc : VideoConstants
         vc =
             ESP32.videoConstants esp32
 
+        fill : Node
         fill =
             Node.rectFill "test-fill"
                 { x = vc.xMin
@@ -499,6 +580,7 @@ overlapBboxScenario esp32 base =
                 , color = Color.white
                 }
 
+        outline : Node
         outline =
             Node.rect "test-outline"
                 { x = vc.xMin
@@ -508,6 +590,7 @@ overlapBboxScenario esp32 base =
                 , color = Color.white
                 }
 
+        root : Node
         root =
             appendInjected (asGroup base) [ fill, outline ]
     in
@@ -530,9 +613,11 @@ type alias GroupMenuScenario =
 withGroupMenuScenario : ESP32 -> Node -> GroupMenuScenario
 withGroupMenuScenario esp32 _ =
     let
+        vc : VideoConstants
         vc =
             ESP32.videoConstants esp32
 
+        child : Node
         child =
             Node.rectFill "group-child"
                 { x = vc.xMin
@@ -542,9 +627,11 @@ withGroupMenuScenario esp32 _ =
                 , color = Color.white
                 }
 
+        menuRoot : Node
         menuRoot =
             Node.group "menu-root" [ child ]
 
+        root : Node
         root =
             Node.group "fuzz-root" [ menuRoot ]
     in
@@ -568,9 +655,11 @@ type alias OverlapPixelScenario =
 overlapPixelScenario : ESP32 -> Node -> OverlapPixelScenario
 overlapPixelScenario esp32 base =
     let
+        vc : VideoConstants
         vc =
             ESP32.videoConstants esp32
 
+        line : Node
         line =
             Node.xLine "test-line"
                 { x = vc.xMin
@@ -579,6 +668,7 @@ overlapPixelScenario esp32 base =
                 , color = Color.white
                 }
 
+        bitmap : Node
         bitmap =
             Node.bitmap "test-bitmap"
                 { x = vc.xMin
@@ -589,6 +679,7 @@ overlapPixelScenario esp32 base =
                 , data = [ Color.black ]
                 }
 
+        root : Node
         root =
             appendInjected (asGroup base) [ line, bitmap ]
     in
@@ -612,9 +703,11 @@ type alias TextScenario =
 withTextScenario : ESP32 -> Node -> TextScenario
 withTextScenario esp32 base =
     let
+        vc : VideoConstants
         vc =
             ESP32.videoConstants esp32
 
+        textNode : Node
         textNode =
             Node.text [ textFont ]
                 "test-text"
@@ -625,6 +718,7 @@ withTextScenario esp32 base =
                 , color = Color.white
                 }
 
+        root : Node
         root =
             appendInjected (asGroup base) [ textNode ]
     in
@@ -688,11 +782,39 @@ connectedModel config =
         , rootNodeJsonText = Encode.encode 0 (Node.jsonEncoder config.root)
         , rootNodeJsonError = Nothing
         , selectedPath = Nothing
-        , previewMenu = Nothing
+        , previewContextMenu = Nothing
         , previewZoom = config.previewZoom
         , previewDrag = Nothing
         , previewIgnoreClick = False
         }
+
+
+addGroupChildSelectId : List Int -> String
+addGroupChildSelectId path =
+    "add-child-select-" ++ String.join "-" (List.map String.fromInt path)
+
+
+addGroupChild :
+    List Int
+    -> String
+    -> ProgramTest.ProgramTest Main.Model Main.Msg (Cmd Main.Msg)
+    -> ProgramTest.ProgramTest Main.Model Main.Msg (Cmd Main.Msg)
+addGroupChild path kind =
+    -- TODO: this doesn't capture the whole truth: there have been bugs with click
+    -- on <option> bubbling up to the parent group and triggering "SelectNode",
+    -- nullifying the effect of focusing the freshly added child node. I don't
+    -- yet know how to correctly test this, but we do have a stopPropagation to
+    -- help with that bug.
+    ProgramTest.simulateDomEvent
+        (Query.find [ Test.Html.Selector.id (addGroupChildSelectId path) ])
+        ( "change"
+        , Encode.object
+            [ ( "target"
+              , Encode.object
+                    [ ( "value", Encode.string kind ) ]
+              )
+            ]
+        )
 
 
 textFont : Font.Font
@@ -711,12 +833,15 @@ textFont =
 previewMouseEvent : ESP32 -> Int -> String -> Int -> Int -> Int -> ( String, Encode.Value )
 previewMouseEvent esp32 zoom eventName videoX videoY button =
     let
+        vc : VideoConstants
         vc =
             ESP32.videoConstants esp32
 
+        offsetX : Int
         offsetX =
             (videoX - vc.xMin) * zoom
 
+        offsetY : Int
         offsetY =
             (videoY - vc.yMin) * zoom
     in
