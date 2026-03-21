@@ -13,6 +13,7 @@ suite =
         [ Test.describe "contains"
             [ Test.describe "unit tests"
                 (let
+                    testCases : List ( String, ( ( Int, Int ), BoundingBox ), Bool )
                     testCases =
                         [ ( "interior point", ( ( 5, 6 ), { x = 0, y = 0, w = 10, h = 10 } ), True )
                         , ( "min corner inclusive", ( ( 0, 0 ), { x = 0, y = 0, w = 10, h = 10 } ), True )
@@ -20,6 +21,7 @@ suite =
                         , ( "non-positive size is false", ( ( 0, 0 ), { x = 0, y = 0, w = 0, h = 10 } ), False )
                         ]
 
+                    toTest : ( String, ( ( Int, Int ), BoundingBox ), Bool ) -> Test
                     toTest ( description, ( ( x, y ), bbox ), expected ) =
                         Test.test description <|
                             \_ ->
@@ -64,18 +66,23 @@ suite =
         , Test.fuzz2 Fuzzers.bbox Fuzzers.bbox "union of any two valid boxes has correct extent (min corner, max right/bottom)" <|
             \a b ->
                 let
+                    u : BoundingBox
                     u =
                         BoundingBox.union a b
 
+                    expectedX : Int
                     expectedX =
                         min a.x b.x
 
+                    expectedY : Int
                     expectedY =
                         min a.y b.y
 
+                    expectedRight : Int
                     expectedRight =
                         max (a.x + a.w) (b.x + b.w)
 
+                    expectedBottom : Int
                     expectedBottom =
                         max (a.y + a.h) (b.y + b.h)
                 in
@@ -93,6 +100,7 @@ suite =
         , Test.fuzz bboxSharingCorner "union of two boxes sharing a corner equals minimal enclosing box" <|
             \( a, b ) ->
                 let
+                    u : BoundingBox
                     u =
                         BoundingBox.union a b
                 in
@@ -106,6 +114,7 @@ suite =
         , Test.fuzz disjointBboxes "union of two disjoint (non-touching) boxes still has correct extent" <|
             \( a, b ) ->
                 let
+                    u : BoundingBox
                     u =
                         BoundingBox.union a b
                 in

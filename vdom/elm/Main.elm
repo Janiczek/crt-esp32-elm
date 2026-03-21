@@ -25,13 +25,14 @@ import Bitmap.Bd4_256_16_TestStrip
 import Bitmap.Bd4_64_64_Duke
 import Bitmap.Bd8_256_16_TestStrip
 import Bitmap.Bd8_64_64_Duke
+import BoundingBox exposing (BoundingBox)
 import Browser exposing (Document)
 import Browser.Dom
 import Browser.Events
 import Bytes exposing (Bytes)
 import Bytes.Decode
 import Bytes.Encode
-import Color
+import Color exposing (Color)
 import Dirty
 import ESP32 exposing (ESP32, VideoConstants)
 import Font exposing (Font)
@@ -46,7 +47,7 @@ import List.Extra
 import Node exposing (Node, Type(..))
 import Path
 import PreviewDrag
-import Set
+import Set exposing (Set)
 import Svg exposing (Svg)
 import Svg.Attributes
 import Task
@@ -192,7 +193,7 @@ type MsgConnected
     | PreviewDragEnd
     | UpdateNodeAtPath (List Int) String Type
     | UpdateNodeAtPathAndRefocusPreview (List Int) String Type
-    | PreviewFocusAttempted (Result Browser.Dom.Error ())
+    | PreviewFocusAttempted
     | InsertChild (List Int) Int Type
     | RemoveNode (List Int)
     | SetPreviewZoom Int
@@ -236,9 +237,11 @@ port sendRootNode : Bytes -> Cmd msg
 addChildValidationError : ModelConnected -> List Int -> Type -> Maybe Node.LimitError
 addChildValidationError model parentPath type_ =
     let
+        root : Node
         root =
             desiredRoot model.rootNode
 
+        insertIndex : Int
         insertIndex =
             Path.getNodeAtPath parentPath root
                 |> Maybe.andThen
@@ -252,6 +255,7 @@ addChildValidationError model parentPath type_ =
                     )
                 |> Maybe.withDefault 0
 
+        candidateRoot : Node
         candidateRoot =
             Path.insertChildAtPath
                 parentPath
@@ -348,12 +352,15 @@ defaultBitmapConfig =
 defaultNodeForType : List Font -> VideoConstants -> Type -> Node
 defaultNodeForType fonts vc type_ =
     let
+        x : Int
         x =
             vc.xMin
 
+        y : Int
         y =
             vc.yMin
 
+        c : Color
         c =
             Color.white
     in
@@ -385,9 +392,11 @@ defaultNodeForType fonts vc type_ =
 newChildForInsert : List Font -> VideoConstants -> Node -> Type -> Node
 newChildForInsert fonts vc root type_ =
     let
+        prototype : Node
         prototype =
             defaultNodeForType fonts vc type_
 
+        key : String
         key =
             Node.uniqueKeyAmong (Node.allKeys root) prototype.key
     in
@@ -430,9 +439,11 @@ encodeNodeJson node =
 commitNewRootNode : Node -> ModelConnected -> ModelConnected
 commitNewRootNode newRoot modelConnected =
     let
+        json : String
         json =
             encodeNodeJson newRoot
 
+        newRootNode : RootNode
         newRootNode =
             case modelConnected.rootNode of
                 RootSynced { root } ->
@@ -486,13 +497,16 @@ type alias ConnectedUpdateConfig =
 commitUpdateNodeAtPath : ConnectedUpdateConfig -> ModelConnected -> List Int -> String -> Type -> ModelConnected
 commitUpdateNodeAtPath cfg modelConnected path key type_ =
     let
+        existing : Maybe Node
         existing =
             Path.getNodeAtPath path (desiredRoot modelConnected.rootNode)
 
+        newRoot : Node
         newRoot =
             case existing of
                 Just _ ->
                     let
+                        newNode : Node
                         newNode =
                             case type_ of
                                 Group _ ->
@@ -569,6 +583,7 @@ update msg model =
                     , fonts = [ Font.Fallback.fallback ]
                     }
 
+                root : Node
                 root =
                     Node.group "root"
                         [ Node.rect "frame"
@@ -608,6 +623,7 @@ update msg model =
             case model of
                 NotConnected nc ->
                     let
+                        sanitizedChunkCount : Int
                         sanitizedChunkCount =
                             max 0 initialLoadStart.expectedChunkCount
                     in
@@ -616,6 +632,7 @@ update msg model =
                             | loadingProgress =
                                 if sanitizedChunkCount > 0 then
                                     let
+                                        sanitizedTotalBytes : Int
                                         sanitizedTotalBytes =
                                             max 0 initialLoadStart.expectedTotalBytes
                                     in
@@ -648,6 +665,7 @@ update msg model =
                                     |> Maybe.map
                                         (\progress ->
                                             let
+                                                sanitizedChunkBytes : Int
                                                 sanitizedChunkBytes =
                                                     max 0 chunkBytes
                                             in
@@ -670,12 +688,15 @@ update msg model =
 
         ConnectSuccessful esp32 ->
             let
+                videoConstants_ : VideoConstants
                 videoConstants_ =
                     ESP32.videoConstants esp32
 
+                node : Node
                 node =
                     Node.empty
 
+                json : String
                 json =
                     encodeNodeJson node
             in
@@ -795,6 +816,7 @@ updateConnected_ cfg msgConnected modelConnected =
 
             else
                 let
+                    hits : List (List Int)
                     hits =
                         Node.hitPathsAtPixel
                             x
@@ -810,6 +832,7 @@ updateConnected_ cfg msgConnected modelConnected =
 
         PreviewContextMenuRequested x y ->
             let
+                hits : List (List Int)
                 hits =
                     Node.hitPathsAtPixel
                         x
@@ -859,20 +882,23 @@ updateConnected_ cfg msgConnected modelConnected =
         UpdateNodeAtPathAndRefocusPreview path key type_ ->
             ( commitUpdateNodeAtPath cfg modelConnected path key type_
             , Browser.Dom.focus previewSurfaceDomId
-                |> Task.attempt PreviewFocusAttempted
+                |> Task.attempt (\_ -> PreviewFocusAttempted)
             )
 
-        PreviewFocusAttempted _ ->
+        PreviewFocusAttempted ->
             ( modelConnected, Cmd.none )
 
         InsertChild parentPath index type_ ->
             let
+                root : Node
                 root =
                     desiredRoot modelConnected.rootNode
 
+                newChild : Node
                 newChild =
                     newChildForInsert modelConnected.esp32.fonts modelConnected.videoConstants root type_
 
+                newRoot : Node
                 newRoot =
                     Path.insertChildAtPath parentPath index newChild root
             in
@@ -892,6 +918,7 @@ updateConnected_ cfg msgConnected modelConnected =
 
         RemoveNode path ->
             let
+                newRoot : Node
                 newRoot =
                     Path.removeNodeAtPath path (desiredRoot modelConnected.rootNode)
             in
@@ -992,6 +1019,7 @@ updateConnected_ cfg msgConnected modelConnected =
 
                     RootAwaitingAckWithPending r ->
                         let
+                            acked : Node
                             acked =
                                 r.inFlightRoot
                         in
@@ -1027,6 +1055,7 @@ updateConnected_ cfg msgConnected modelConnected =
 
                 Just path ->
                     let
+                        root : Node
                         root =
                             desiredRoot modelConnected.rootNode
                     in
@@ -1036,6 +1065,7 @@ updateConnected_ cfg msgConnected modelConnected =
 
                         Just node ->
                             let
+                                doNudge : () -> ModelConnected
                                 doNudge () =
                                     nudgePositionedLeafAtPath cfg.commitRoot dx dy modelConnected path node root
                             in
@@ -1074,6 +1104,7 @@ setRootNode esp32 videoConstants previousNode node =
 
     else
         let
+            dirtyTiles : Set ( Int, Int )
             dirtyTiles =
                 Dirty.diff
                     { tileSize = esp32.tileSize
@@ -1087,6 +1118,7 @@ setRootNode esp32 videoConstants previousNode node =
             _ =
                 Debug.log "sending dirty tiles" (Set.size dirtyTiles)
 
+            bytes : Bytes
             bytes =
                 Bytes.Encode.sequence
                     [ Node.bytesEncoder node
@@ -1155,6 +1187,7 @@ viewNotConnected model =
 viewInitialLoadProgress : LoadingProgress -> Html Msg
 viewInitialLoadProgress progress =
     let
+        widthPercent : String
         widthPercent =
             if progress.expectedChunkCount <= 0 then
                 "0%"
@@ -1167,14 +1200,18 @@ viewInitialLoadProgress progress =
                     )
                     ++ "%"
 
+        kilobytesText : Int -> String
         kilobytesText bytes =
             let
+                tenths : Int
                 tenths =
                     round ((toFloat bytes * 10) / 1024)
 
+                whole : Int
                 whole =
                     tenths // 10
 
+                fractional : Int
                 fractional =
                     modBy 10 tenths
             in
@@ -1220,9 +1257,11 @@ viewInitialLoadProgress progress =
 previewPointDecoder : VideoConstants -> Int -> Json.Decode.Decoder ( Int, Int )
 previewPointDecoder vc zoom =
     let
+        zoom_ : Int
         zoom_ =
             max 1 zoom
 
+        coordinateDecoder : String -> Int -> Int -> Json.Decode.Decoder Int
         coordinateDecoder field min_ max_ =
             Json.Decode.oneOf
                 [ Json.Decode.field field Json.Decode.float
@@ -1288,6 +1327,7 @@ previewArrowKeyDecoder =
         |> Json.Decode.andThen
             (\( key, shift ) ->
                 let
+                    step : Int
                     step =
                         if shift then
                             4
@@ -1316,9 +1356,11 @@ previewArrowKeyDecoder =
 tryStartPreviewDrag : Int -> Int -> Float -> Float -> ModelConnected -> ModelConnected
 tryStartPreviewDrag videoX videoY clientX clientY modelConnected =
     let
+        root : Node
         root =
             desiredRoot modelConnected.rootNode
 
+        hits : List (List Int)
         hits =
             Node.hitPathsAtPixel videoX videoY root
     in
@@ -1369,6 +1411,7 @@ applyPreviewDragMove commitRoot clientX clientY modelConnected =
 
         Just drag ->
             let
+                root : Node
                 root =
                     desiredRoot modelConnected.rootNode
             in
@@ -1400,10 +1443,12 @@ applyPreviewDragMove commitRoot clientX clientY modelConnected =
                                                     ( clientX, clientY )
                                                     drag.startNodeXY
 
+                                            newMoved : Bool
                                             newMoved =
                                                 drag.moved
                                                     || (( newX, newY ) /= drag.startNodeXY)
 
+                                            nextDrag : Maybe PreviewDragState
                                             nextDrag =
                                                 Just { drag | moved = newMoved }
                                         in
@@ -1412,12 +1457,15 @@ applyPreviewDragMove commitRoot clientX clientY modelConnected =
 
                                         else
                                             let
+                                                newType : Type
                                                 newType =
                                                     Node.typeWithNewXY newX newY node.type_
 
+                                                newNode : Node
                                                 newNode =
                                                     Node.fromKeyAndType modelConnected.esp32.fonts node.key newType
 
+                                                newRoot : Node
                                                 newRoot =
                                                     Path.setNodeAtPath drag.path newNode root
                                             in
@@ -1465,12 +1513,15 @@ nudgePositionedLeafAtPath commitRoot dx dy modelConnected path node root =
 
             else
                 let
+                    newType : Type
                     newType =
                         Node.typeWithNewXY newX newY node.type_
 
+                    newNode : Node
                     newNode =
                         Node.fromKeyAndType modelConnected.esp32.fonts node.key newType
 
+                    newRoot : Node
                     newRoot =
                         Path.setNodeAtPath path newNode root
                 in
@@ -1502,6 +1553,7 @@ selectionBorderView vc zoom maybeNode =
 
         Just node ->
             let
+                bbox : BoundingBox
                 bbox =
                     node.bbox
             in
@@ -1510,18 +1562,23 @@ selectionBorderView vc zoom maybeNode =
 
             else
                 let
+                    leftPx : Int
                     leftPx =
                         (bbox.x - vc.xMin) * zoom
 
+                    topPx : Int
                     topPx =
                         (bbox.y - vc.yMin) * zoom
 
+                    widthPx : Int
                     widthPx =
                         max 1 (bbox.w * zoom)
 
+                    heightPx : Int
                     heightPx =
                         max 1 (bbox.h * zoom)
 
+                    borderStyle : String
                     borderStyle =
                         case node.type_ of
                             Group _ ->
@@ -1564,6 +1621,7 @@ selectionBorderView vc zoom maybeNode =
 previewContextMenuView : VideoConstants -> Int -> Node -> PreviewContextMenu -> Html Msg
 previewContextMenuView vc zoom root previewContextMenu =
     let
+        menuButton : List Int -> Node -> Html Msg
         menuButton path node =
             Html.button
                 [ Html.Events.onClick (MsgConnected (SelectNode (Just path)))
@@ -1574,6 +1632,7 @@ previewContextMenuView vc zoom root previewContextMenu =
                 ]
                 [ Html.text (Node.displayLabel node) ]
 
+        items : List (Html Msg)
         items =
             previewContextMenu.paths
                 |> List.filterMap
@@ -1604,9 +1663,11 @@ previewContextMenuView vc zoom root previewContextMenu =
 viewPreviewHeader : ModelConnected -> Html Msg
 viewPreviewHeader model =
     let
+        zoom : Int
         zoom =
             model.previewZoom
 
+        zoomButton : Int -> Html Msg
         zoomButton z =
             Html.button
                 [ Html.Events.onClick (MsgConnected (SetPreviewZoom z))
@@ -1634,29 +1695,37 @@ viewPreviewHeader model =
 viewPreviewSurface : ModelConnected -> Html Msg
 viewPreviewSurface model =
     let
+        vc : VideoConstants
         vc =
             model.videoConstants
 
+        zoom : Int
         zoom =
             model.previewZoom
 
+        root : Node
         root =
             desiredRoot model.rootNode
 
+        selectedNode : Maybe Node
         selectedNode =
             model.selectedPath
                 |> Maybe.andThen (\path -> Path.getNodeAtPath path root)
 
+        zoomedW : Int
         zoomedW =
             vc.usableWidth * zoom
 
+        zoomedH : Int
         zoomedH =
             vc.usableHeight * zoom
 
+        clickDecoder : Json.Decode.Decoder Msg
         clickDecoder =
             previewPointDecoder vc zoom
                 |> Json.Decode.map (\( x, y ) -> MsgConnected (PreviewClicked x y))
 
+        contextMenuDecoder : Json.Decode.Decoder ( Msg, Bool )
         contextMenuDecoder =
             previewPointDecoder vc zoom
                 |> Json.Decode.map
@@ -1744,9 +1813,11 @@ viewSidebarColumn model =
 viewRootNodeJsonColumn : ModelConnected -> Html Msg
 viewRootNodeJsonColumn model =
     let
+        hasError : Bool
         hasError =
             model.rootNodeJsonError /= Nothing
 
+        textareaBorder : String
         textareaBorder =
             if hasError then
                 "1px solid #b91c1c"
@@ -1754,6 +1825,7 @@ viewRootNodeJsonColumn model =
             else
                 "1px solid var(--border)"
 
+        errorView : Html Msg
         errorView =
             case model.rootNodeJsonError of
                 Nothing ->
@@ -1857,9 +1929,11 @@ viewTreeColumn model =
 viewTreeNode : ModelConnected -> List Int -> Node -> Html Msg
 viewTreeNode model path node =
     let
+        isSelected : Bool
         isSelected =
             model.selectedPath == Just path
 
+        rowAttrs : List (Html.Attribute Msg)
         rowAttrs =
             [ Html.Attributes.style "padding" "0.15rem 0.35rem"
             , Html.Attributes.style "cursor" "pointer"
@@ -1874,6 +1948,7 @@ viewTreeNode model path node =
                         []
                    )
 
+        childrenView : Html Msg
         childrenView =
             case node.type_ of
                 Node.Group { children } ->
@@ -1889,6 +1964,7 @@ viewTreeNode model path node =
                 _ ->
                     Html.text ""
 
+        addRemove : Html Msg
         addRemove =
             Html.span
                 [ Html.Attributes.style "margin-left" "0.5rem"
@@ -1920,6 +1996,7 @@ viewTreeNode model path node =
 viewAddChildButton : ModelConnected -> List Int -> Html Msg
 viewAddChildButton model path =
     let
+        canAdd : Bool
         canAdd =
             case Path.getNodeAtPath path (desiredRoot model.rootNode) of
                 Just n ->
@@ -1935,6 +2012,7 @@ viewAddChildButton model path =
     in
     if canAdd then
         let
+            insertIndex : Int
             insertIndex =
                 Path.getNodeAtPath path (desiredRoot model.rootNode)
                     |> Maybe.andThen
@@ -1948,13 +2026,16 @@ viewAddChildButton model path =
                         )
                     |> Maybe.withDefault 0
 
+            vc : VideoConstants
             vc =
                 model.videoConstants
 
+            limitWarning : Maybe String
             limitWarning =
                 addChildValidationError model path (Group { children = [] })
                     |> Maybe.map addChildLimitWarning
 
+            addOption : String -> String -> Html Msg
             addOption val label =
                 Html.option [ Html.Attributes.value val ] [ Html.text label ]
         in
@@ -2138,6 +2219,7 @@ detailsGridRowTop labelText control =
 viewNodeDetails : ModelConnected -> Node -> List Int -> Html Msg
 viewNodeDetails model node path =
     let
+        keyInput : Html Msg
         keyInput =
             Html.input
                 [ Html.Attributes.value node.key
@@ -2174,6 +2256,7 @@ viewNodeDetails model node path =
             in
             centerInUsableAreaButton x y toType
 
+        typeFields : List (Html Msg)
         typeFields =
             case node.type_ of
                 Rect r ->
@@ -2320,6 +2403,7 @@ viewNodeDetails model node path =
 intSliderInput : Int -> Int -> List Int -> String -> (Int -> Type) -> Int -> Html Msg
 intSliderInput min_ max_ path key toType current =
     let
+        current_ : Int
         current_ =
             clamp min_ max_ current
     in
@@ -2357,6 +2441,7 @@ intSliderInput min_ max_ path key toType current =
 colorInput : List Int -> String -> (Int -> Type) -> Int -> Html Msg
 colorInput path key toType current =
     let
+        current_ : Int
         current_ =
             clamp 0 255 current
     in
@@ -2460,6 +2545,7 @@ viewLastError lastError =
 renderNodeToSvg : List Font -> Maybe (List Int) -> List Int -> Node -> List (Svg msg)
 renderNodeToSvg fonts selectedPath path node_ =
     let
+        inner : List (Svg msg)
         inner =
             case node_.type_ of
                 Node.Group { children } ->
@@ -2497,12 +2583,15 @@ renderNodeToSvgLeaf fonts node_ =
 
             else
                 let
+                    css : String
                     css =
                         Color.toCss color
 
+                    x2 : Int
                     x2 =
                         x + w - 1
 
+                    y2 : Int
                     y2 =
                         y + h - 1
                 in
@@ -2581,22 +2670,28 @@ renderNodeToSvgLeaf fonts node_ =
 
                 Just font ->
                     let
+                        lineHeight : Int
                         lineHeight =
                             font.glyphHeight + font.extraLineHeight
 
+                        hasChar : Char -> Bool
                         hasChar c =
                             let
+                                code : Int
                                 code =
                                     Char.toCode c
                             in
                             code >= font.asciiFirst && code <= font.asciiLast
 
+                        drawChar : Int -> Int -> Char -> List (Svg msg)
                         drawChar gx gy char =
                             if hasChar char then
                                 let
+                                    code : Int
                                     code =
                                         Char.toCode char
 
+                                    glyphIdx : Int
                                     glyphIdx =
                                         code - font.asciiFirst
                                 in
@@ -2637,6 +2732,7 @@ renderNodeToSvgLeaf fonts node_ =
 
                                 c :: rest ->
                                     let
+                                        glyphs : List (Svg msg)
                                         glyphs =
                                             drawChar curX curY c
                                     in

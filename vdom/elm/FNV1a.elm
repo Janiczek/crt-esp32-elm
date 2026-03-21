@@ -57,6 +57,7 @@ updateInt8 value seed =
 updateInt16 : Int -> Int -> Int
 updateInt16 value seed =
     let
+        v : Int
         v =
             Bitwise.and 0xFFFFFFFF value
     in
@@ -70,6 +71,7 @@ updateInt16 value seed =
 updateInt32 : Int -> Int -> Int
 updateInt32 value seed =
     let
+        v : Int
         v =
             Bitwise.and 0xFFFFFFFF value
     in

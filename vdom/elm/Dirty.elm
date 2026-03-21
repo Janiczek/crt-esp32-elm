@@ -33,9 +33,11 @@ type alias TileGrid =
 dirtyTilesEncoder : Set ( Int, Int ) -> Bytes.Encode.Encoder
 dirtyTilesEncoder tiles =
     let
+        pairs : List ( Int, Int )
         pairs =
             Set.toList tiles
 
+        encodePair : ( Int, Int ) -> Bytes.Encode.Encoder
         encodePair ( tx, ty ) =
             Bytes.Encode.sequence
                 [ Bytes.Encode.unsignedInt8 tx
@@ -73,6 +75,7 @@ diff grid fonts oldRoot newRoot =
 
                 else
                     let
+                        newBorder : Set ( Int, Int )
                         newBorder =
                             markRectBorder grid newRoot.bbox
                     in
@@ -81,6 +84,7 @@ diff grid fonts oldRoot newRoot =
 
                     else
                         let
+                            oldBorder : Set ( Int, Int )
                             oldBorder =
                                 markRectBorder grid oldRoot.bbox
                         in
@@ -139,6 +143,7 @@ diffChildren grid fonts oldChildren newChildren =
             Set.diff oldKeys newKeys
                 |> Set.toList
 
+        updateTiles : Set ( Int, Int )
         updateTiles =
             updateKeys
                 |> List.map
@@ -152,12 +157,14 @@ diffChildren grid fonts oldChildren newChildren =
                     )
                 |> List.foldl Set.union Set.empty
 
+        insertionTiles : Set ( Int, Int )
         insertionTiles =
             insertKeys
                 |> List.filterMap (\key -> Dict.get key new)
                 |> List.map (\n -> markBbox grid n.bbox)
                 |> List.foldl Set.union Set.empty
 
+        deletionTiles : Set ( Int, Int )
         deletionTiles =
             deleteKeys
                 |> List.filterMap (\key -> Dict.get key old)
@@ -165,6 +172,7 @@ diffChildren grid fonts oldChildren newChildren =
                 |> List.foldl Set.union Set.empty
 
         -- TODO think about this more...
+        reorderTiles : Set ( Int, Int )
         reorderTiles =
             if oldKeys == newKeys && List.map .key oldChildren /= List.map .key newChildren then
                 newChildren
@@ -190,21 +198,27 @@ of them. For example diagonal lines wouldn't mark tiles in the two unrelated cor
 markBbox : TileGrid -> BoundingBox -> Set ( Int, Int )
 markBbox grid bbox =
     let
+        tx0 : Int
         tx0 =
             bbox.x // grid.tileSize
 
+        ty0 : Int
         ty0 =
             bbox.y // grid.tileSize
 
+        tx1 : Int
         tx1 =
             (bbox.x + bbox.w - 1) // grid.tileSize
 
+        ty1 : Int
         ty1 =
             (bbox.y + bbox.h - 1) // grid.tileSize
 
+        clampTx : Int -> Int
         clampTx tx =
             clamp 0 (grid.tileCols - 1) tx
 
+        clampTy : Int -> Int
         clampTy ty =
             clamp 0 (grid.tileRows - 1) ty
     in
@@ -225,15 +239,19 @@ markRectBorder grid bbox =
 
     else
         let
+            top : BoundingBox
             top =
                 { bbox | h = 1 }
 
+            bottom : BoundingBox
             bottom =
                 { bbox | y = bbox.y + bbox.h - 1, h = 1 }
 
+            left : BoundingBox
             left =
                 { bbox | w = 1 }
 
+            right : BoundingBox
             right =
                 { bbox | x = bbox.x + bbox.w - 1, w = 1 }
         in
@@ -280,6 +298,7 @@ changedTextCells oldStr newStr =
 allTextCells : Int -> Int -> List Char -> List ( Int, Int, Char )
 allTextCells row col chars =
     let
+        go : List ( Int, Int, Char ) -> List Char -> Int -> Int -> List ( Int, Int, Char )
         go acc lst r c =
             case lst of
                 [] ->
@@ -308,6 +327,12 @@ textCellsUntilNewline :
         }
 textCellsUntilNewline row col chars =
     let
+        go :
+            List ( Int, Int )
+            -> List Char
+            -> Int
+            -> Int
+            -> { cells : List ( Int, Int ), rest : List Char, row : Int, col : Int }
         go acc lst r c =
             case lst of
                 [] ->
@@ -335,12 +360,15 @@ textCellsUntilNewline row col chars =
 textCellToGlyphBbox : { text | x : Int, y : Int } -> Font -> ( Int, Int ) -> BoundingBox
 textCellToGlyphBbox { x, y } font ( row, col ) =
     let
+        lineHeight : Int
         lineHeight =
             font.glyphHeight + font.extraLineHeight
 
+        glyphX : Int
         glyphX =
             x + col * font.glyphWidth
 
+        glyphY : Int
         glyphY =
             y + row * lineHeight + font.extraLineHeight
     in

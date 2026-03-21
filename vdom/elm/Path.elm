@@ -54,6 +54,7 @@ setNodeAtPath path newNode root =
                     case List.Extra.getAt i children of
                         Just child ->
                             let
+                                newChild : Node
                                 newChild =
                                     setNodeAtPath rest newNode child
                             in
@@ -117,6 +118,7 @@ removeNodeAtPath path root =
                     case List.Extra.getAt i children of
                         Just child ->
                             let
+                                newChild : Node
                                 newChild =
                                     removeNodeAtPath rest child
                             in
@@ -152,6 +154,7 @@ insertChildAtPath parentPath index newChild root =
             case parent.type_ of
                 Group { children } ->
                     let
+                        inserted : List Node
                         inserted =
                             ListExtraExtra.insertAt index newChild children
                     in

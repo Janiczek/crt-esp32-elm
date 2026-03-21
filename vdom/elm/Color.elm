@@ -23,6 +23,7 @@ white =
 toCss : Color -> String
 toCss c =
     let
+        n : Int
         n =
             clamp 0 255 c
     in

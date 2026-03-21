@@ -81,6 +81,7 @@ rowGraysSequential bitDepth width row data =
 
     else
         let
+            p0 : Int
             p0 =
                 row * width
         in
@@ -93,6 +94,7 @@ rowGraysSequential bitDepth width row data =
 
             BitDepth4 ->
                 let
+                    go : Int -> Bool -> List Int -> List Int -> List Int
                     go left highNibbleNext bs acc =
                         if left <= 0 then
                             List.reverse acc
@@ -104,6 +106,7 @@ rowGraysSequential bitDepth width row data =
 
                                 b :: rest ->
                                     let
+                                        sample : Int
                                         sample =
                                             if highNibbleNext then
                                                 Bitwise.and (Bitwise.shiftRightZfBy 4 b) 0x0F
@@ -111,6 +114,7 @@ rowGraysSequential bitDepth width row data =
                                             else
                                                 Bitwise.and b 0x0F
 
+                                        gray : Int
                                         gray =
                                             sample * 17
                                     in
@@ -124,6 +128,7 @@ rowGraysSequential bitDepth width row data =
 
             BitDepth2 ->
                 let
+                    go : Int -> Int -> List Int -> List Int -> List Int
                     go left posInByte bs acc =
                         if left <= 0 then
                             List.reverse acc
@@ -139,15 +144,19 @@ rowGraysSequential bitDepth width row data =
 
                                     else
                                         let
+                                            shift : Int
                                             shift =
                                                 6 - posInByte * 2
 
+                                            sample : Int
                                             sample =
                                                 Bitwise.and (Bitwise.shiftRightZfBy shift b) 0x03
 
+                                            gray : Int
                                             gray =
                                                 sample * 85
 
+                                            nextPos : Int
                                             nextPos =
                                                 posInByte + 1
                                         in
@@ -161,6 +170,7 @@ rowGraysSequential bitDepth width row data =
 
             BitDepth1 ->
                 let
+                    go : Int -> Int -> List Int -> List Int -> List Int
                     go left bitInByte bs acc =
                         if left <= 0 then
                             List.reverse acc
@@ -176,12 +186,15 @@ rowGraysSequential bitDepth width row data =
 
                                     else
                                         let
+                                            shift : Int
                                             shift =
                                                 7 - bitInByte
 
+                                            sample : Int
                                             sample =
                                                 Bitwise.and (Bitwise.shiftRightZfBy shift b) 0x01
 
+                                            gray : Int
                                             gray =
                                                 if sample == 0 then
                                                     0
@@ -189,6 +202,7 @@ rowGraysSequential bitDepth width row data =
                                                 else
                                                     255
 
+                                            nextBit : Int
                                             nextBit =
                                                 bitInByte + 1
                                         in

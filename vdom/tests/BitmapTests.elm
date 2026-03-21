@@ -74,6 +74,7 @@ suite =
             , Test.fuzz rowInputFuzzer "always returns exactly width grayscale samples in range" <|
                 \input ->
                     let
+                        grays : List Int
                         grays =
                             Bitmap.rowGraysSequential_TEST input.bitDepth input.width input.row input.data
                     in
@@ -88,6 +89,7 @@ suite =
             , Test.fuzz bitDepth8ReferenceFuzzer "BitDepth8 row offsets match the raw byte layout" <|
                 \( width, row, byte ) ->
                     let
+                        grays : List Int
                         grays =
                             Bitmap.rowGraysSequential_TEST BitDepth8 width row (List.repeat (row * width) 0 ++ List.repeat width byte)
                     in
@@ -102,6 +104,7 @@ rowInputFuzzer =
     Fuzz.map3
         (\bitDepth width row ->
             let
+                maxLen : Int
                 maxLen =
                     Bitmap.packedByteLength width (row + 1) bitDepth + 8
             in

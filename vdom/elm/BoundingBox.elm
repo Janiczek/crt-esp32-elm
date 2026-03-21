@@ -40,15 +40,19 @@ union a b =
 
     else
         let
+            x0 : Int
             x0 =
                 min a.x b.x
 
+            y0 : Int
             y0 =
                 min a.y b.y
 
+            x1 : Int
             x1 =
                 max (a.x + a.w) (b.x + b.w)
 
+            y1 : Int
             y1 =
                 max (a.y + a.h) (b.y + b.h)
         in

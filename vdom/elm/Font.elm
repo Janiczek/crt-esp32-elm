@@ -35,15 +35,18 @@ decoder =
 renderGlyphPixel : Font -> Int -> Int -> Int -> Bool
 renderGlyphPixel font g row col =
     let
+        byteIdx : Int
         byteIdx =
             g * font.glyphHeight + row
 
+        byte : Int
         byte =
             font.bits
                 |> List.drop byteIdx
                 |> List.head
                 |> Maybe.withDefault 0
 
+        bit : Int
         bit =
             Bitwise.and (Bitwise.shiftRightBy (7 - col) byte) 1
     in

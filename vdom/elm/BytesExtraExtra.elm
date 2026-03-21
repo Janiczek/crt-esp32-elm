@@ -6,7 +6,7 @@ module BytesExtraExtra exposing
     , sizedStringEncoder
     )
 
-import Bytes exposing (Endianness(..))
+import Bytes exposing (Bytes, Endianness(..))
 import Bytes.Decode exposing (Decoder)
 import Bytes.Decode.Extra
 import Bytes.Encode
@@ -44,9 +44,11 @@ sizedListEncoder childEncoder xs =
 compressedEncoder : Bytes.Encode.Encoder -> Bytes.Encode.Encoder
 compressedEncoder encoder =
     let
+        raw : Bytes
         raw =
             Bytes.Encode.encode encoder
 
+        decompressedLen : Int
         decompressedLen =
             Bytes.width raw
     in
@@ -58,9 +60,11 @@ compressedEncoder encoder =
 
     else
         let
+            compressed : Bytes
             compressed =
                 Flate.deflateZlib raw
 
+            compressedLen : Int
             compressedLen =
                 Bytes.width compressed
         in

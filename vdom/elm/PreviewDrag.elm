@@ -25,9 +25,11 @@ clampedNodeXYFromClientDrag :
     -> ( Int, Int )
 clampedNodeXYFromClientDrag vc zoom ( cx0, cy0 ) ( cx1, cy1 ) ( nx, ny ) =
     let
+        dx : Int
         dx =
             truncate ((cx1 - cx0) / toFloat zoom)
 
+        dy : Int
         dy =
             truncate ((cy1 - cy0) / toFloat zoom)
     in

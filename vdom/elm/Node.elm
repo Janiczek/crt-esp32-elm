@@ -77,6 +77,7 @@ type LimitError
 centerPosition : VideoConstants -> Node -> ( Int, Int )
 centerPosition vc node_ =
     let
+        centerBySize : Int -> Int -> ( Int, Int )
         centerBySize w h =
             ( vc.xCenter - (w // 2) |> max vc.xMin
             , vc.yCenter - (h // 2) |> max vc.yMin
@@ -183,6 +184,7 @@ uniqueKeyAmong used base =
 uniqueKeyAmongSuffix : Set String -> String -> Int -> String
 uniqueKeyAmongSuffix used base n =
     let
+        candidate : String
         candidate =
             base ++ "-" ++ String.fromInt n
     in
@@ -320,6 +322,7 @@ yLine =
 bitmap : String -> { x : Int, y : Int, w : Int, h : Int, bitDepth : BitDepth, data : List Int } -> Node
 bitmap key config =
     let
+        expectedLen : Int
         expectedLen =
             Bitmap.packedByteLength config.w config.h config.bitDepth
     in
@@ -394,6 +397,7 @@ textMultilineSize font s =
 normalizeBitmapData : Int -> List Int -> List Int
 normalizeBitmapData expectedLen data =
     let
+        normalized : List Int
         normalized =
             data
                 |> List.take expectedLen
@@ -573,6 +577,7 @@ fromKeyAndType fonts key type_ =
 jsonEncoder : Node -> Json.Encode.Value
 jsonEncoder node_ =
     let
+        base : String -> List ( String, Json.Encode.Value ) -> Json.Encode.Value
         base tag extra =
             Json.Encode.object <|
                 List.concat
@@ -645,6 +650,7 @@ jsonEncoder node_ =
 jsonDecoder : ESP32 -> Decoder Node
 jsonDecoder esp32 =
     let
+        fontCount : Int
         fontCount =
             List.length esp32.fonts
     in
@@ -744,9 +750,11 @@ jsonDecoder esp32 =
 limitErrors : ESP32 -> Node -> List LimitError
 limitErrors esp32 node_ =
     let
+        totalNodes : Int
         totalNodes =
             size node_
 
+        totalNodeError : List LimitError
         totalNodeError =
             if totalNodes > esp32.maxTotalNodes then
                 [ MaxTotalNodesExceeded
@@ -766,6 +774,7 @@ collectGroupChildrenErrors esp32 node_ =
     case node_.type_ of
         Group { children } ->
             let
+                hereError : List LimitError
                 hereError =
                     if List.length children > esp32.nodeGroupMaxChildren then
                         [ NodeGroupMaxChildrenExceeded

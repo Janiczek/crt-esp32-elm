@@ -44,33 +44,43 @@ type alias VideoConstants =
 videoConstants : ESP32 -> VideoConstants
 videoConstants esp32 =
     let
+        xMin : Int
         xMin =
             esp32.crtPaddingLeft
 
+        xMax : Int
         xMax =
             esp32.videoWidth - esp32.crtPaddingRight
 
+        yMin : Int
         yMin =
             esp32.crtPaddingTop
 
+        yMax : Int
         yMax =
             esp32.videoHeight - esp32.crtPaddingBottom
 
+        usableWidth : Int
         usableWidth =
             xMax - xMin + 1
 
+        usableHeight : Int
         usableHeight =
             yMax - yMin + 1
 
+        xCenter : Int
         xCenter =
             (usableWidth // 2) + xMin
 
+        yCenter : Int
         yCenter =
             (usableHeight // 2) + yMin
 
+        tileCols : Int
         tileCols =
             esp32.videoWidth // esp32.tileSize
 
+        tileRows : Int
         tileRows =
             esp32.videoHeight // esp32.tileSize
     in
@@ -107,6 +117,7 @@ growToAccommodate bbox esp32 =
 
     else
         let
+            vc : VideoConstants
             vc =
                 videoConstants esp32
         in
@@ -115,21 +126,27 @@ growToAccommodate bbox esp32 =
 
         else
             let
+                needXMax : Int
                 needXMax =
                     bbox.x + bbox.w - 1
 
+                needYMax : Int
                 needYMax =
                     bbox.y + bbox.h - 1
 
+                targetXMax : Int
                 targetXMax =
                     max vc.xMax needXMax
 
+                targetYMax : Int
                 targetYMax =
                     max vc.yMax needYMax
 
+                newVideoWidth : Int
                 newVideoWidth =
                     max esp32.videoWidth (targetXMax + esp32.crtPaddingRight)
 
+                newVideoHeight : Int
                 newVideoHeight =
                     max esp32.videoHeight (targetYMax + esp32.crtPaddingBottom)
             in

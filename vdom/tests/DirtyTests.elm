@@ -18,15 +18,18 @@ suite =
     Test.describe "Dirty"
         [ Test.describe "diffChildren"
             (let
+                basicGrid : Dirty.TileGrid
                 basicGrid =
                     { tileSize = 8
                     , tileCols = 4
                     , tileRows = 4
                     }
 
+                color : Int
                 color =
                     Color.black
 
+                rect : String -> BoundingBox -> Node
                 rect key bbox =
                     Node.rect key
                         { x = bbox.x
@@ -52,15 +55,19 @@ suite =
                 bboxC =
                     { x = 0, y = 8, w = 8, h = 8 }
 
+                nodeA : Node
                 nodeA =
                     rect "a" bboxA
 
+                nodeB : Node
                 nodeB =
                     rect "b" bboxB
 
+                nodeB2 : Node
                 nodeB2 =
                     rect "b" bboxB2
 
+                nodeC : Node
                 nodeC =
                     rect "c" bboxC
              in
@@ -79,6 +86,7 @@ suite =
              , Test.test "mixed update+insert+delete: union of update diff + inserted bbox + deleted bbox (order independent)" <|
                 \_ ->
                     let
+                        expected : Set ( Int, Int )
                         expected =
                             Dirty.diff basicGrid [] nodeB nodeB2
                                 |> Set.union (Dirty.markBbox_TEST basicGrid nodeA.bbox)
@@ -89,6 +97,7 @@ suite =
              , Test.test "mixed update+insert+delete: still works if child order differs" <|
                 \_ ->
                     let
+                        expected : Set ( Int, Int )
                         expected =
                             Dirty.diff basicGrid [] nodeB nodeB2
                                 |> Set.union (Dirty.markBbox_TEST basicGrid nodeA.bbox)
@@ -432,6 +441,14 @@ suite =
                           }
                         ]
 
+                    toTest :
+                        { name : String
+                        , textOrigin : ( Int, Int )
+                        , font : Font
+                        , cell : ( Int, Int )
+                        , expected : BoundingBox
+                        }
+                        -> Test
                     toTest c =
                         Test.test c.name <|
                             \_ ->
@@ -467,12 +484,15 @@ suite =
               <|
                 \( textOrigin, font ) ->
                     let
+                        row : Int
                         row =
                             0
 
+                        col : Int
                         col =
                             0
 
+                        bbox : BoundingBox
                         bbox =
                             Dirty.textCellToGlyphBbox_TEST
                                 { x = Tuple.first textOrigin, y = Tuple.second textOrigin }
@@ -493,12 +513,14 @@ suite =
               <|
                 \( tileSize, textX ) ->
                     let
+                        grid : Dirty.TileGrid
                         grid =
                             { tileSize = tileSize
                             , tileCols = 50
                             , tileRows = 50
                             }
 
+                        font : Font
                         font =
                             { name = ""
                             , asciiFirst = 32
@@ -510,6 +532,7 @@ suite =
                             , bits = []
                             }
 
+                        bbox : BoundingBox
                         bbox =
                             Dirty.textCellToGlyphBbox_TEST { x = textX, y = 0 } font ( 0, 0 )
                     in
@@ -597,12 +620,19 @@ suite =
         , Test.describe "markRectBorder"
             [ Test.describe "border-only (excludes interior tiles)" <|
                 let
+                    grid : Dirty.TileGrid
                     grid =
                         { tileSize = 8
                         , tileCols = 4
                         , tileRows = 4
                         }
 
+                    cases :
+                        List
+                            { name : String
+                            , bbox : BoundingBox
+                            , expected : List ( Int, Int )
+                            }
                     cases =
                         [ { name = "single-tile: bbox fully inside one tile"
                           , bbox = { x = 2, y = 2, w = 4, h = 4 }
@@ -618,6 +648,12 @@ suite =
                           }
                         ]
 
+                    toTest :
+                        { name : String
+                        , bbox : BoundingBox
+                        , expected : List ( Int, Int )
+                        }
+                        -> Test
                     toTest c =
                         Test.test c.name <|
                             \() ->
@@ -627,6 +663,7 @@ suite =
                 List.map toTest cases
             ]
         , let
+            basicGrid : Dirty.TileGrid
             basicGrid =
                 { tileSize = 8
                 , tileCols = 4
@@ -638,15 +675,19 @@ suite =
                 [ Test.test "two rects sharing top-left, same color, second larger: dirty tiles include both old and new borders" <|
                     \_ ->
                         let
+                            color : Int
                             color =
                                 Color.black
 
+                            smallBbox : BoundingBox
                             smallBbox =
                                 { x = 0, y = 0, w = 8, h = 8 }
 
+                            largeBbox : BoundingBox
                             largeBbox =
                                 { x = 0, y = 0, w = 16, h = 16 }
 
+                            oldRoot : Node
                             oldRoot =
                                 Node.rect "r"
                                     { x = smallBbox.x
@@ -656,6 +697,7 @@ suite =
                                     , color = color
                                     }
 
+                            newRoot : Node
                             newRoot =
                                 Node.rect "r"
                                     { x = largeBbox.x
@@ -665,6 +707,7 @@ suite =
                                     , color = color
                                     }
 
+                            expected : Set ( Int, Int )
                             expected =
                                 Dirty.markRectBorder_TEST basicGrid smallBbox
                                     |> Set.union (Dirty.markRectBorder_TEST basicGrid largeBbox)
@@ -674,12 +717,15 @@ suite =
                 , Test.test "same-color rect moved left across a tile boundary repaints both old and new border tiles" <|
                     \_ ->
                         let
+                            oldBbox : BoundingBox
                             oldBbox =
                                 { x = 8, y = 0, w = 8, h = 8 }
 
+                            newBbox : BoundingBox
                             newBbox =
                                 { x = 7, y = 0, w = 8, h = 8 }
 
+                            oldRoot : Node
                             oldRoot =
                                 Node.rect "r"
                                     { x = oldBbox.x
@@ -689,6 +735,7 @@ suite =
                                     , color = Color.black
                                     }
 
+                            newRoot : Node
                             newRoot =
                                 Node.rect "r"
                                     { x = newBbox.x
@@ -698,6 +745,7 @@ suite =
                                     , color = Color.black
                                     }
 
+                            expected : Set ( Int, Int )
                             expected =
                                 Dirty.markRectBorder_TEST basicGrid oldBbox
                                     |> Set.union (Dirty.markRectBorder_TEST basicGrid newBbox)
@@ -707,12 +755,15 @@ suite =
                 , Test.test "same-color rect geometry change within the same tile ring still repaints all touched tiles" <|
                     \_ ->
                         let
+                            oldBbox : BoundingBox
                             oldBbox =
                                 { x = 10, y = 10, w = 14, h = 14 }
 
+                            newBbox : BoundingBox
                             newBbox =
                                 { x = 9, y = 10, w = 15, h = 14 }
 
+                            oldRoot : Node
                             oldRoot =
                                 Node.rect "r"
                                     { x = oldBbox.x
@@ -722,6 +773,7 @@ suite =
                                     , color = Color.black
                                     }
 
+                            newRoot : Node
                             newRoot =
                                 Node.rect "r"
                                     { x = newBbox.x
@@ -731,6 +783,7 @@ suite =
                                     , color = Color.black
                                     }
 
+                            expected : Set ( Int, Int )
                             expected =
                                 Dirty.markRectBorder_TEST basicGrid oldBbox
                                     |> Set.union (Dirty.markRectBorder_TEST basicGrid newBbox)
@@ -742,9 +795,11 @@ suite =
                 [ Test.test "update+insert+delete via key matching" <|
                     \_ ->
                         let
+                            color : Int
                             color =
                                 Color.black
 
+                            rect : String -> BoundingBox -> Node
                             rect key bbox =
                                 Node.rect key
                                     { x = bbox.x
@@ -754,36 +809,47 @@ suite =
                                     , color = color
                                     }
 
+                            bboxA : BoundingBox
                             bboxA =
                                 { x = 0, y = 0, w = 8, h = 8 }
 
+                            bboxB : BoundingBox
                             bboxB =
                                 { x = 8, y = 0, w = 8, h = 8 }
 
+                            bboxB2 : BoundingBox
                             bboxB2 =
                                 { x = 8, y = 0, w = 16, h = 8 }
 
+                            bboxC : BoundingBox
                             bboxC =
                                 { x = 0, y = 8, w = 8, h = 8 }
 
+                            oldA : Node
                             oldA =
                                 rect "a" bboxA
 
+                            oldB : Node
                             oldB =
                                 rect "b" bboxB
 
+                            newB : Node
                             newB =
                                 rect "b" bboxB2
 
+                            newC : Node
                             newC =
                                 rect "c" bboxC
 
+                            oldRoot : Node
                             oldRoot =
                                 Node.group "g" [ oldA, oldB ]
 
+                            newRoot : Node
                             newRoot =
                                 Node.group "g" [ newB, newC ]
 
+                            expected : Set ( Int, Int )
                             expected =
                                 Dirty.diff basicGrid [] oldB newB
                                     |> Set.union (Dirty.markBbox_TEST basicGrid oldA.bbox)
