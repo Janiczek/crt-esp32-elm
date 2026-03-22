@@ -11,6 +11,7 @@ of changing the C source code and recompiling+reflashing. Also it's pretty cool.
 TODO:
 
   - [ ] edit font data
+  - [ ] move nodes _into_ groups (change semantics of moveTreeNodeUp/Down)
   - [ ] upload images and convert them to greyscale bitmap
       - [ ] dithering formats? Applicable for non-BitDepth1?
 
