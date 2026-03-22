@@ -61,6 +61,18 @@
         button:hover { background: #4b4b5b; border-color: rgba(125, 211, 252, 0.55); }
         button:active { transform: translateY(1px); }
 
+        button:disabled {
+            cursor: not-allowed;
+            opacity: 0.5;
+            box-shadow: none;
+        }
+        button:disabled:hover,
+        button:disabled:active {
+            background: var(--surface-4);
+            border-color: var(--border);
+            transform: none;
+        }
+
         input, select, textarea {
             background: rgba(255, 255, 255, 0.03);
             border: 1px solid var(--border);

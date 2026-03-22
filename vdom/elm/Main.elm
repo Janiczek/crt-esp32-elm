@@ -45,6 +45,7 @@ import Json.Decode
 import Json.Encode
 import List.Extra
 import Node exposing (Node, Type(..))
+import Result
 import Path
 import PreviewDrag
 import Set exposing (Set)
@@ -196,6 +197,8 @@ type MsgConnected
     | PreviewFocusAttempted
     | InsertChild (List Int) Int Type
     | RemoveNode (List Int)
+    | MoveTreeNodeUp (List Int)
+    | MoveTreeNodeDown (List Int)
     | SetPreviewZoom Int
     | SetRootNodeJsonText String
     | RestoreRootNodeJson
@@ -267,8 +270,12 @@ addChildValidationError model parentPath type_ =
         Nothing
 
     else
-        Node.limitErrors model.esp32 candidateRoot
-            |> List.head
+        case Node.validateLimits model.esp32 candidateRoot of
+            Ok _ ->
+                Nothing
+
+            Err errs ->
+                List.head errs
 
 
 addChildLimitWarning : Node.LimitError -> String
@@ -908,19 +915,22 @@ updateConnected_ cfg msgConnected modelConnected =
                 newRoot =
                     Path.insertChildAtPath parentPath index newChild root
             in
-            case List.head (Node.limitErrors modelConnected.esp32 newRoot) of
-                Just _ ->
-                    ( { modelConnected | previewContextMenu = Nothing }, Cmd.none )
-
-                Nothing ->
-                    ( { modelConnected
-                        | previewContextMenu = Nothing
-                        , previewDrag = Nothing
-                        , selectedPath = Just (parentPath ++ [ index ])
-                      }
-                        |> cfg.commitRoot newRoot
-                    , Cmd.none
+            newRoot
+                |> Node.validateLimits modelConnected.esp32
+                |> Result.toMaybe
+                |> Maybe.map
+                    (\validRoot ->
+                        ( { modelConnected
+                            | previewContextMenu = Nothing
+                            , previewDrag = Nothing
+                            , selectedPath = Just (parentPath ++ [ index ])
+                          }
+                            |> cfg.commitRoot validRoot
+                        , Cmd.none
+                        )
                     )
+                |> Maybe.withDefault
+                    ( { modelConnected | previewContextMenu = Nothing }, Cmd.none )
 
         RemoveNode path ->
             let
@@ -945,6 +955,72 @@ updateConnected_ cfg msgConnected modelConnected =
                 |> cfg.commitRoot newRoot
             , Cmd.none
             )
+
+        MoveTreeNodeUp path ->
+            let
+                root : Node
+                root =
+                    desiredRoot modelConnected.rootNode
+            in
+            root
+                |> Path.moveTreeNodeUp path
+                |> Maybe.andThen
+                    (\candidate ->
+                        Node.validateLimits modelConnected.esp32 candidate
+                            |> Result.toMaybe
+                    )
+                |> Maybe.map
+                    (\validRoot ->
+                        ( { modelConnected
+                            | previewContextMenu = Nothing
+                            , previewDrag = Nothing
+                            , selectedPath =
+                                modelConnected.selectedPath
+                                    |> Maybe.andThen
+                                        (\p ->
+                                            Path.getNodeAtPath p root
+                                                |> Maybe.andThen (\n -> Path.findPathByKey n.key validRoot)
+                                        )
+                          }
+                            |> cfg.commitRoot validRoot
+                        , Cmd.none
+                        )
+                    )
+                |> Maybe.withDefault
+                    ( { modelConnected | previewContextMenu = Nothing }, Cmd.none )
+
+        MoveTreeNodeDown path ->
+            let
+                root : Node
+                root =
+                    desiredRoot modelConnected.rootNode
+            in
+            root
+                |> Path.moveTreeNodeDown path
+                |> Maybe.andThen
+                    (\candidate ->
+                        Node.validateLimits modelConnected.esp32 candidate
+                            |> Result.toMaybe
+                    )
+                |> Maybe.map
+                    (\validRoot ->
+                        ( { modelConnected
+                            | previewContextMenu = Nothing
+                            , previewDrag = Nothing
+                            , selectedPath =
+                                modelConnected.selectedPath
+                                    |> Maybe.andThen
+                                        (\p ->
+                                            Path.getNodeAtPath p root
+                                                |> Maybe.andThen (\n -> Path.findPathByKey n.key validRoot)
+                                        )
+                          }
+                            |> cfg.commitRoot validRoot
+                        , Cmd.none
+                        )
+                    )
+                |> Maybe.withDefault
+                    ( { modelConnected | previewContextMenu = Nothing }, Cmd.none )
 
         SetPreviewZoom zoom ->
             ( { modelConnected
@@ -1975,6 +2051,18 @@ viewTreeNode model path node =
                 _ ->
                     Html.text ""
 
+        treeRoot : Node
+        treeRoot =
+            desiredRoot model.rootNode
+
+        canMoveUp : Bool
+        canMoveUp =
+            Path.canMoveTreeNodeUp path treeRoot
+
+        canMoveDown : Bool
+        canMoveDown =
+            Path.canMoveTreeNodeDown path treeRoot
+
         addRemove : Html Msg
         addRemove =
             Html.span
@@ -1991,10 +2079,24 @@ viewTreeNode model path node =
                     [ viewAddChildButton model path
                     , Html.button
                         [ Html.Events.stopPropagationOn "click"
+                            (Json.Decode.succeed ( MsgConnected (MoveTreeNodeUp path), True ))
+                        , Html.Attributes.disabled (not canMoveUp)
+                        , Html.Attributes.style "padding" "0 0.25rem"
+                        ]
+                        [ Html.text "↑" ]
+                    , Html.button
+                        [ Html.Events.stopPropagationOn "click"
+                            (Json.Decode.succeed ( MsgConnected (MoveTreeNodeDown path), True ))
+                        , Html.Attributes.disabled (not canMoveDown)
+                        , Html.Attributes.style "padding" "0 0.25rem"
+                        ]
+                        [ Html.text "↓" ]
+                    , Html.button
+                        [ Html.Events.stopPropagationOn "click"
                             (Json.Decode.succeed ( MsgConnected (RemoveNode path), True ))
                         , Html.Attributes.style "padding" "0 0.25rem"
                         ]
-                        [ Html.text "Remove" ]
+                        [ Html.text "✘" ]
                     ]
                 )
     in

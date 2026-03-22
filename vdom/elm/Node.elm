@@ -23,6 +23,7 @@ module Node exposing
     , topLeftXY
     , typeWithNewXY
     , uniqueKeyAmong
+    , validateLimits
     , xLine
     , yLine
     )
@@ -738,13 +739,29 @@ jsonDecoder esp32 =
             )
         |> Json.Decode.andThen
             (\decoded ->
-                case List.head (limitErrors esp32 decoded) of
-                    Just err ->
-                        Json.Decode.fail (decoderLimitErrorToString err)
+                case validateLimits esp32 decoded of
+                    Ok okNode ->
+                        Json.Decode.succeed okNode
 
-                    Nothing ->
-                        Json.Decode.succeed decoded
+                    Err errs ->
+                        Json.Decode.fail
+                            (List.head errs
+                                |> Maybe.map decoderLimitErrorToString
+                                |> Maybe.withDefault "Node exceeds ESP32 limits"
+                            )
             )
+
+
+{-| `Ok node` when `limitErrors` is empty; otherwise `Err` lists all limit violations.
+-}
+validateLimits : ESP32 -> Node -> Result (List LimitError) Node
+validateLimits esp32 node_ =
+    case limitErrors esp32 node_ of
+        [] ->
+            Ok node_
+
+        errs ->
+            Err errs
 
 
 limitErrors : ESP32 -> Node -> List LimitError
